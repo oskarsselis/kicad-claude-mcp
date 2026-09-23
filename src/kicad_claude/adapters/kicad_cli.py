@@ -132,7 +132,7 @@ def run_erc(
             f"stderr: {r.stderr[-300:]}"
         )
 
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     return _shape_erc(data, output_json)
 
 
@@ -206,7 +206,7 @@ def run_drc(
             f"stderr: {r.stderr[-300:]}"
         )
 
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     return _shape_drc(data, output_json)
 
 

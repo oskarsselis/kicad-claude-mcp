@@ -114,7 +114,7 @@ def register(mcp) -> None:
             + f"\n{analysis}\n.print all\n.end\n"
         )
         driver_path = out.with_suffix(".cir")
-        driver_path.write_text(composed)
+        driver_path.write_text(composed, encoding="utf-8")
 
         try:
             r = subprocess.run(
