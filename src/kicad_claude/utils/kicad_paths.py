@@ -16,6 +16,11 @@ from pathlib import Path
 _KICAD_VERSIONS = ("10", "9", "8", "7")
 
 
+def _windows_install_dirnames() -> list[str]:
+    """Windows installer uses `9.0`, `10.0`, ...; also accept bare `9`, `10`."""
+    return [name for v in _KICAD_VERSIONS for name in (f"{v}.0", v)]
+
+
 def _platform_default_symbol_dirs() -> list[Path]:
     """Default install locations for `.kicad_sym` libraries by OS."""
     sys_name = platform.system()
@@ -27,8 +32,8 @@ def _platform_default_symbol_dirs() -> list[Path]:
         return [Path("/usr/share/kicad/symbols")]
     if sys_name == "Windows":
         return [
-            Path(rf"C:\Program Files\KiCad\{v}\share\kicad\symbols")
-            for v in _KICAD_VERSIONS
+            Path(rf"C:\Program Files\KiCad\{d}\share\kicad\symbols")
+            for d in _windows_install_dirnames()
         ]
     return []
 
@@ -43,8 +48,8 @@ def _platform_default_footprint_dirs() -> list[Path]:
         return [Path("/usr/share/kicad/footprints")]
     if sys_name == "Windows":
         return [
-            Path(rf"C:\Program Files\KiCad\{v}\share\kicad\footprints")
-            for v in _KICAD_VERSIONS
+            Path(rf"C:\Program Files\KiCad\{d}\share\kicad\footprints")
+            for d in _windows_install_dirnames()
         ]
     return []
 
