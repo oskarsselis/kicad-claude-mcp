@@ -242,19 +242,53 @@ def inject_lib_symbol(tree: list, symbol_def_node: list) -> None:
 def fetch_symbol_def(lib_path: Path, symbol_name: str) -> list:
     """Open a `.kicad_sym`, return a deep copy of the named (symbol ...) node.
 
+    Derived symbols (`(extends "Base")`, e.g. Transistor_FET:2N7002) are
+    flattened the way KiCAD embeds them in a schematic: the base's graphics,
+    pins and flags, with the derived symbol's properties taking precedence.
     The returned node is renamed-ready for lib_symbols: the caller should
     set its name to "LibName:SymbolName" before injecting.
     """
-    import copy
-
     text = Path(lib_path).read_text(encoding="utf-8", errors="replace")
     data = sexpdata.loads(text)
     if not is_call(data, "kicad_symbol_lib"):
         raise ValueError(f"not a kicad_symbol_lib: {lib_path}")
-    for child in data[1:]:
-        if is_call(child, "symbol") and len(child) >= 2 and child[1] == symbol_name:
-            return copy.deepcopy(child)
-    raise KeyError(f"symbol {symbol_name!r} not found in {lib_path}")
+    by_name = {
+        child[1]: child
+        for child in data[1:]
+        if is_call(child, "symbol") and len(child) >= 2 and isinstance(child[1], str)
+    }
+    if symbol_name not in by_name:
+        raise KeyError(f"symbol {symbol_name!r} not found in {lib_path}")
+    return _flatten_symbol(by_name, symbol_name, seen=set())
+
+
+def _flatten_symbol(by_name: dict[str, list], name: str, seen: set[str]) -> list:
+    node = copy.deepcopy(by_name[name])
+    ext = find_child(node, "extends")
+    if ext is None:
+        return node
+    base_name = ext[1]
+    if base_name in seen or base_name not in by_name:
+        raise KeyError(f"symbol {name!r} extends unknown or cyclic base {base_name!r}")
+    base = _flatten_symbol(by_name, base_name, seen | {name})
+
+    own_props = {p[1]: p for p in find_children(node, "property") if len(p) >= 3}
+    out: list[Any] = [sym("symbol"), name]
+    for child in base[2:]:
+        if is_call(child, "property") and len(child) >= 3 and child[1] in own_props:
+            out.append(own_props.pop(child[1]))
+        elif head_of(child) == "symbol" and isinstance(child[1], str):
+            # Unit sub-symbols are named after their parent: Base_1_1 -> Name_1_1.
+            child[1] = name + child[1][len(base_name):]
+            out.append(child)
+        else:
+            out.append(child)
+    # Derived-only properties go after the inherited ones, before the units.
+    first_unit = next(
+        (i for i, c in enumerate(out) if head_of(c) == "symbol"), len(out)
+    )
+    out[first_unit:first_unit] = list(own_props.values())
+    return out
 
 
 def make_lib_symbol_entry(symbol_def_node: list, qualified_lib_id: str) -> list:

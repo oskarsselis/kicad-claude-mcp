@@ -171,9 +171,23 @@ def get_symbol_pins(lib_path: Path, symbol_name: str) -> list[dict[str, Any]]:
         return []
     if not _is_call(data, "kicad_symbol_lib"):
         return []
-    for child in data[1:]:
-        if _is_call(child, "symbol") and len(child) >= 2 and child[1] == symbol_name:
-            return _extract_pins(child)
+    by_name = {
+        child[1]: child
+        for child in data[1:]
+        if _is_call(child, "symbol") and len(child) >= 2
+    }
+    seen: set[str] = set()
+    # A derived symbol (`extends`) draws its pins from the base symbol.
+    while symbol_name in by_name and symbol_name not in seen:
+        seen.add(symbol_name)
+        node = by_name[symbol_name]
+        pins = _extract_pins(node)
+        base = next(
+            (c[1] for c in node[2:] if _is_call(c, "extends") and len(c) >= 2), None
+        )
+        if pins or base is None:
+            return pins
+        symbol_name = base
     return []
 
 

@@ -260,3 +260,24 @@ def test_move_symbol_off_grid_is_refused(tree):
         ed.move_symbol(tree, "R1", 101.6, 101.6)
     s = ed.find_symbol_by_reference(tree, "R1")
     assert float(sch_io.find_child(s, "at")[2]) == pytest.approx(ed.page_height_mm(tree) - 100.33)
+
+
+# ===== Derived symbols (extends) =========================================== #
+
+_MINILIB = Path(__file__).parent / "fixtures" / "MiniLib.kicad_sym"
+
+
+def test_fetch_symbol_def_flattens_extends():
+    node = ed.fetch_symbol_def(_MINILIB, "R_Small")
+    assert sch_io.find_child(node, "extends") is None
+    assert ed.get_symbol_property(node, "Value") == "R_Small"  # derived wins
+    assert ed.get_symbol_property(node, "Footprint") == "Resistor_SMD:R_0603_1608Metric"
+    units = [c[1] for c in node[2:] if sch_io.head_of(c) == "symbol"]
+    assert units == ["R_Small_0_1"]
+    assert sorted(ed.collect_pin_numbers(node)) == ["1", "2"]
+
+
+def test_get_symbol_pins_follows_extends():
+    from kicad_claude.indexer.kicad_libs import get_symbol_pins
+
+    assert [p["number"] for p in get_symbol_pins(_MINILIB, "R_Small")] == ["1", "2"]
