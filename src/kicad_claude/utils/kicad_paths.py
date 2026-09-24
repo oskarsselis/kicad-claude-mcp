@@ -16,7 +16,7 @@ from pathlib import Path
 _KICAD_VERSIONS = ("10", "9", "8", "7")
 
 
-def _windows_install_dirnames() -> list[str]:
+def windows_install_dirnames() -> list[str]:
     """Windows installer uses `9.0`, `10.0`, ...; also accept bare `9`, `10`."""
     return [name for v in _KICAD_VERSIONS for name in (f"{v}.0", v)]
 
@@ -33,7 +33,7 @@ def _platform_default_symbol_dirs() -> list[Path]:
     if sys_name == "Windows":
         return [
             Path(rf"C:\Program Files\KiCad\{d}\share\kicad\symbols")
-            for d in _windows_install_dirnames()
+            for d in windows_install_dirnames()
         ]
     return []
 
@@ -49,7 +49,7 @@ def _platform_default_footprint_dirs() -> list[Path]:
     if sys_name == "Windows":
         return [
             Path(rf"C:\Program Files\KiCad\{d}\share\kicad\footprints")
-            for d in _windows_install_dirnames()
+            for d in windows_install_dirnames()
         ]
     return []
 
@@ -106,7 +106,7 @@ def _dedup_existing(paths: list[Path]) -> list[Path]:
 def find_kicad_cli() -> Path | None:
     """Return path to `kicad-cli`, or None if unavailable.
 
-    Checks PATH first, then macOS-bundled location.
+    Checks PATH first, then the macOS bundle / Windows install locations.
     """
     found = shutil.which("kicad-cli")
     if found:
@@ -115,6 +115,11 @@ def find_kicad_cli() -> Path | None:
         candidate = Path("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
         if candidate.is_file():
             return candidate
+    if platform.system() == "Windows":
+        for d in windows_install_dirnames():
+            candidate = Path(rf"C:\Program Files\KiCad\{d}\bin\kicad-cli.exe")
+            if candidate.is_file():
+                return candidate
     return None
 
 

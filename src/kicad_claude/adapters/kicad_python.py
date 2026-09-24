@@ -18,6 +18,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from kicad_claude.utils.kicad_paths import windows_install_dirnames
+
 logger = logging.getLogger("kicad-claude.adapters.kicad_python")
 
 
@@ -63,8 +65,8 @@ def find_kicad_python() -> Path | None:
             return Path(sys_python)
 
     if sys_name == "Windows":
-        for ver in ("10", "9", "8"):
-            cand = Path(rf"C:\Program Files\KiCad\{ver}\bin\python.exe")
+        for d in windows_install_dirnames():
+            cand = Path(rf"C:\Program Files\KiCad\{d}\bin\python.exe")
             if cand.is_file():
                 return cand
 
