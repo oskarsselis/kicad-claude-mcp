@@ -173,7 +173,7 @@ def test_existing_max_per_prefix(tmp_path: Path):
         defn = sch_ed.fetch_symbol_def(fixtures / "MiniLib.kicad_sym", "Resistor")
         sch_ed.add_symbol(
             tree, qualified_lib_id="MiniLib:Resistor",
-            reference=ref, value="x", x_mm=10, y_mm=10, rotation=0,
+            reference=ref, value="x", x_mm=100, y_mm=100, rotation=0,
             sym_def_node=defn, project_name="x",
         )
     counts = annotation.existing_max_per_prefix(tree)
@@ -284,6 +284,9 @@ def test_acceptance_full_flow_routes_real_track(tmp_path: Path):
     from kicad_claude.utils.kicad_paths import find_kicad_cli
     if find_kicad_cli() is None:
         pytest.skip("kicad-cli not available")
+    from kicad_claude.adapters.freerouting import find_freerouting_jar, find_java
+    if find_freerouting_jar() is None or find_java() is None:
+        pytest.skip("Freerouting (jar + Java) not available")
     cached = kicad_libs.load_cache()
     if cached is None:
         pytest.skip("library index not built")

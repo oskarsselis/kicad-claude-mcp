@@ -90,19 +90,19 @@ def _resolve_lib_symbol(lib_id: str) -> tuple[Path, str, dict]:
     )
 
 
-def _next_power_reference(tree: list) -> str:
-    """Auto-increment a `#PWR####` reference, picking the smallest unused number."""
+def _next_power_reference(tree: list, prefix: str = "#PWR") -> str:
+    """Auto-increment a `#PWR####` (or `#FLG####`) reference, picking the smallest unused number."""
     used = set()
     for ref in ed.all_references(tree):
         if not ref:
             continue
-        m = re.fullmatch(r"#PWR0*(\d+)", ref)
+        m = re.fullmatch(re.escape(prefix) + r"0*(\d+)", ref)
         if m:
             used.add(int(m.group(1)))
     n = 1
     while n in used:
         n += 1
-    return f"#PWR{n:04d}"
+    return f"{prefix}{n:04d}"
 
 
 # --------------------------------------------------------------------------- #
@@ -128,7 +128,9 @@ def register(mcp) -> None:
             lib_id: e.g. "Device:R" or "RF_Module:ESP32-S3-WROOM-1"
             reference: schematic-unique reference designator (e.g. "R1", "U2")
             value: human-visible value ("10k", "100uF", ...)
-            x_mm, y_mm: position, MCP coords (Y up)
+            x_mm, y_mm: position, MCP coords: mm, origin at the page's
+                bottom-left, Y up. Keep pin ends on the 100 mil (2.54 mm)
+                grid; placements outside the drawing frame are refused.
             rotation: 0/90/180/270 degrees CCW
 
         Returns the placed symbol's identity. Refuses if `reference` already exists.
@@ -228,11 +230,11 @@ def register(mcp) -> None:
 
     @mcp.tool()
     def add_power_symbol(net: str, x_mm: float, y_mm: float) -> dict:
-        """Place a power symbol (e.g. +5V, +3V3, GND) from the `power` library.
+        """Place a power symbol (e.g. +5V, +3V3, GND, PWR_FLAG) from the `power` library.
 
-        Auto-assigns a `#PWR####` reference. The library symbol id is
-        `power:{net}`; if that doesn't exist in the index, the call fails with
-        a hint listing valid power nets.
+        Auto-assigns a hidden `#PWR####` reference (`#FLG####` for PWR_FLAG).
+        The library symbol id is `power:{net}`; if that doesn't exist in the
+        index, the call fails with a hint listing valid power nets.
         """
         candidate = f"power:{net}"
         idx = lib_tools._ensure_index()
@@ -246,7 +248,7 @@ def register(mcp) -> None:
             )
 
         tree, path = _load_active_schematic()
-        ref = _next_power_reference(tree)
+        ref = _next_power_reference(tree, "#FLG" if net == "PWR_FLAG" else "#PWR")
         lib_path, sym_name, meta = _resolve_lib_symbol(candidate)
         sym_def = ed.fetch_symbol_def(lib_path, sym_name)
         proj = state.get_active()

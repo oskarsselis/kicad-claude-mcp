@@ -11,6 +11,7 @@ helper does the conversion at the boundary.
 
 from __future__ import annotations
 
+import copy
 import shutil
 import uuid
 from datetime import datetime
@@ -28,7 +29,6 @@ from kicad_claude.adapters.sch_io import (
     sym,
 )
 from kicad_claude.utils.geometry import (
-    DEFAULT_PAGE_HEIGHT_MM,
     mcp_to_kicad_xy,
     normalize_rotation,
     rotate_xy,
@@ -58,24 +58,61 @@ def backup_file(path: Path) -> Path | None:
 # --------------------------------------------------------------------------- #
 
 
-def page_height_mm(tree: list) -> float:
-    """Detect the schematic page height. Defaults to A4 landscape (210mm)."""
+# Schematic connection grid: 100 mil. Wire ends, pin ends and labels belong on it.
+SCH_GRID_MM = 2.54
+
+# Distance from the paper edge to KiCAD's default drawing-sheet frame.
+SHEET_FRAME_MARGIN_MM = 10.0
+
+# KiCAD paper sizes, landscape (width, height) in mm.
+_PAPER_SIZES_MM = {
+    "A0": (1189.0, 841.0),
+    "A1": (841.0, 594.0),
+    "A2": (594.0, 420.0),
+    "A3": (420.0, 297.0),
+    "A4": (297.0, 210.0),
+    "A5": (210.0, 148.0),
+    "USLetter": (279.4, 215.9),
+    "USLegal": (355.6, 215.9),
+    "USLedger": (431.8, 279.4),
+}
+
+
+def page_size_mm(tree: list) -> tuple[float, float]:
+    """Paper (width, height) in mm from `(paper ...)`. Defaults to A4 landscape."""
     paper = find_child(tree, "paper")
-    if paper and len(paper) >= 2 and isinstance(paper[1], str):
-        # KiCAD paper sizes (height in mm, landscape orientation by default):
-        sizes = {
-            "A0": 841.0,
-            "A1": 594.0,
-            "A2": 420.0,
-            "A3": 297.0,
-            "A4": 210.0,
-            "A5": 148.0,
-            "USLetter": 215.9,
-            "USLegal": 215.9,
-            "USLedger": 279.4,
-        }
-        return sizes.get(paper[1], DEFAULT_PAGE_HEIGHT_MM)
-    return DEFAULT_PAGE_HEIGHT_MM
+    if not (paper and len(paper) >= 2 and isinstance(paper[1], str)):
+        return _PAPER_SIZES_MM["A4"]
+    if paper[1] == "User" and len(paper) >= 4:
+        return float(paper[2]), float(paper[3])
+    w, h = _PAPER_SIZES_MM.get(paper[1], _PAPER_SIZES_MM["A4"])
+    if any(isinstance(p, sexpdata.Symbol) and str(p) == "portrait" for p in paper[2:]):
+        w, h = h, w
+    return w, h
+
+
+def page_height_mm(tree: list) -> float:
+    """Y-flip reference for MCP <-> KiCAD coordinates.
+
+    This is the paper height rounded down to the connection grid, not the raw
+    height: A4's 210 mm is not a multiple of 2.54, and flipping around it
+    would push every on-grid MCP coordinate off the grid in the file.
+    """
+    _, h = page_size_mm(tree)
+    return round_mm(int(h / SCH_GRID_MM) * SCH_GRID_MM)
+
+
+def require_inside_frame(tree: list, x_k: float, y_k: float, what: str) -> None:
+    """Refuse a point (KiCAD coords) that falls outside the drawing-sheet frame."""
+    w, h = page_size_mm(tree)
+    m = SHEET_FRAME_MARGIN_MM
+    if not (m <= x_k <= w - m and m <= y_k <= h - m):
+        page_h = page_height_mm(tree)
+        raise ValueError(
+            f"{what}: MCP point ({round_mm(x_k)}, {round_mm(page_h - y_k)}) is outside "
+            f"the drawing frame; valid MCP range is x {m}..{w - m}, "
+            f"y {round_mm(page_h - (h - m))}..{round_mm(page_h - m)} (Y up)"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -198,6 +235,176 @@ def collect_pin_numbers(symbol_def_node: list) -> list[str]:
     return pins
 
 
+# --------------------------------------------------------------------------- #
+# Symbol outline + field placement
+# --------------------------------------------------------------------------- #
+
+FIELD_TEXT_MM = 1.27  # KiCAD default field font size
+FIELD_GAP_MM = 1.27  # clearance between the symbol outline and its field text
+FIELD_LINE_MM = 2.54  # spacing between the stacked Reference / Value lines
+
+
+def _is_hidden(node: list) -> bool:
+    """True for `(... hide ...)` (KiCAD <= 7) or `(... (hide yes) ...)` (8+)."""
+    for c in node[1:]:
+        if isinstance(c, sexpdata.Symbol) and str(c) == "hide":
+            return True
+        if is_call(c, "hide") and (len(c) < 2 or str(c[1]) == "yes"):
+            return True
+    return False
+
+
+def _drawn_items(symbol_def_node: list):
+    """Yield graphic/pin nodes drawn for unit 1, body style 1 (plus shared unit 0)."""
+    for child in symbol_def_node[2:]:
+        if head_of(child) == "symbol" and len(child) >= 2 and isinstance(child[1], str):
+            parts = child[1].rsplit("_", 2)
+            unit, style = (parts[1], parts[2]) if len(parts) == 3 else ("0", "0")
+            if unit in ("0", "1") and style in ("0", "1"):
+                yield from child[2:]
+        else:
+            yield child
+
+
+def _xy(node: list | None) -> tuple[float, float] | None:
+    if node is None or len(node) < 3:
+        return None
+    return float(node[1]), float(node[2])
+
+
+def symbol_outline(
+    symbol_def_node: list, sx: float, sy: float, rot: int
+) -> tuple[tuple[float, float, float, float], list[tuple[float, float]]]:
+    """Outline of a placed symbol in KiCAD file coords (Y down).
+
+    Returns `(bbox, pin_ends)`: bbox = (x0, y0, x1, y1) around the body
+    graphics and pins, pin_ends = connection points of the visible pins.
+    """
+    body: list[tuple[float, float]] = []
+    pin_ends: list[tuple[float, float]] = []
+    for item in _drawn_items(symbol_def_node):
+        h = head_of(item)
+        if h == "rectangle":
+            body += [p for p in (_xy(find_child(item, "start")), _xy(find_child(item, "end"))) if p]
+        elif h in ("polyline", "bezier"):
+            pts = find_child(item, "pts")
+            body += [p for p in (_xy(c) for c in find_children(pts or [], "xy")) if p]
+        elif h == "arc":
+            body += [p for p in (_xy(find_child(item, k)) for k in ("start", "mid", "end")) if p]
+        elif h == "circle":
+            c = _xy(find_child(item, "center"))
+            r = find_child(item, "radius")
+            if c and r:
+                rr = float(r[1])
+                body += [(c[0] - rr, c[1] - rr), (c[0] + rr, c[1] + rr)]
+        elif h == "pin" and not _is_hidden(item):
+            px, py, angle = _pin_local_at(item)
+            length_node = find_child(item, "length")
+            length = float(length_node[1]) if length_node else 0.0
+            dx, dy = rotate_xy(length, 0.0, angle)
+            pin_ends.append((px, py))
+            body.append((px + dx, py + dy))
+
+    def to_file(p: tuple[float, float]) -> tuple[float, float]:
+        rx, ry = rotate_xy(p[0], p[1], rot)  # library coords are Y up
+        return sx + rx, sy - ry
+
+    body_f = [to_file(p) for p in body] or [(sx, sy)]
+    ends_f = [to_file(p) for p in pin_ends]
+    xs = [p[0] for p in body_f + ends_f]
+    ys = [p[1] for p in body_f + ends_f]
+    return (min(xs), min(ys), max(xs), max(ys)), ends_f
+
+
+def _field_sides(symbol_def_node: list, sx: float, sy: float, rot: int):
+    """Pick the side of the symbol for its Reference/Value text: the first of
+    right, left, top, bottom that has no pins. Returns (side, bbox)."""
+    bbox, pin_ends = symbol_outline(symbol_def_node, sx, sy, rot)
+    x0, y0, x1, y1 = bbox
+    eps = 1e-6
+    used = set()
+    for px, py in pin_ends:
+        if px >= x1 - eps and not (py <= y0 + eps or py >= y1 - eps):
+            used.add("right")
+        if px <= x0 + eps and not (py <= y0 + eps or py >= y1 - eps):
+            used.add("left")
+        if py <= y0 + eps:
+            used.add("top")
+        if py >= y1 - eps:
+            used.add("bottom")
+    for side in ("right", "left", "top", "bottom"):
+        if side not in used:
+            return side, bbox
+    return "top", bbox
+
+
+def place_ref_value(
+    symbol_def_node: list, sx: float, sy: float, rot: int
+) -> tuple[tuple[float, float, str], tuple[float, float, str], int]:
+    """Anchor points for Reference and Value, stacked on two lines beside the
+    symbol and clear of its outline.
+
+    Returns ((ref_x, ref_y, justify), (val_x, val_y, justify), field_angle),
+    in file coords. Field angle and justification are stored relative to the
+    symbol's orientation in KiCAD, so they are chosen here such that the text
+    reads horizontally and grows away from the symbol at any rotation.
+    """
+    side, (x0, y0, x1, y1) = _field_sides(symbol_def_node, sx, sy, rot)
+    half = FIELD_TEXT_MM / 2
+    cy = (y0 + y1) / 2
+    if side == "right":
+        x, grow = x1 + FIELD_GAP_MM, "left"
+        ref_y, val_y = cy - FIELD_LINE_MM / 2, cy + FIELD_LINE_MM / 2
+    elif side == "left":
+        x, grow = x0 - FIELD_GAP_MM, "right"
+        ref_y, val_y = cy - FIELD_LINE_MM / 2, cy + FIELD_LINE_MM / 2
+    elif side == "top":
+        x, grow = x0, "left"
+        val_y = y0 - FIELD_GAP_MM - half
+        ref_y = val_y - FIELD_LINE_MM
+    else:
+        x, grow = x0, "left"
+        ref_y = y1 + FIELD_GAP_MM + half
+        val_y = ref_y + FIELD_LINE_MM
+    # Rotation 90/180 mirrors the stored justification on screen.
+    flip = {"left": "right", "right": "left"}
+    justify = flip[grow] if rot in (90, 180) else grow
+    angle = 90 if rot in (90, 270) else 0
+    return (
+        (round_mm(x), round_mm(ref_y), justify),
+        (round_mm(x), round_mm(val_y), justify),
+        angle,
+    )
+
+
+def _lib_property(symbol_def_node: list, name: str) -> list | None:
+    for prop in find_children(symbol_def_node, "property"):
+        if len(prop) >= 3 and prop[1] == name:
+            return prop
+    return None
+
+
+def _power_value_prop(
+    symbol_def_node: list, value: str, x_k: float, y_k: float, rot: int
+) -> list:
+    """Value field of a power symbol, positioned and styled as in its library."""
+    lib = _lib_property(symbol_def_node, "Value")
+    lib_at = find_child(lib, "at") if lib else None
+    lx, ly, langle = 0.0, 0.0, 0.0
+    if lib_at and len(lib_at) >= 4:
+        lx, ly, langle = float(lib_at[1]), float(lib_at[2]), float(lib_at[3])
+    rx, ry = rotate_xy(lx, ly, rot)
+    effects = copy.deepcopy(find_child(lib, "effects")) if lib else None
+    if effects is None:
+        effects = [sym("effects"), [sym("font"), [sym("size"), 1.27, 1.27]]]
+    effects[1:] = [c for c in effects[1:] if not is_call(c, "hide")]
+    return [
+        sym("property"), "Value", value,
+        [sym("at"), round_mm(x_k + rx), round_mm(y_k - ry), langle],
+        effects,
+    ]
+
+
 def build_symbol_instance(
     qualified_lib_id: str,
     reference: str,
@@ -212,27 +419,53 @@ def build_symbol_instance(
     footprint: str = "",
     datasheet: str = "~",
     description: str = "",
+    sym_def_node: list | None = None,
 ) -> list:
-    """Construct a new (symbol ...) instance node ready to inject into the schematic."""
+    """Construct a new (symbol ...) instance node ready to inject into the schematic.
+
+    With `sym_def_node`, Reference and Value are laid out beside the symbol
+    (see `place_ref_value`); power symbols keep the library's Value position
+    and hide their `#PWR` reference. Footprint/Datasheet/Description are
+    hidden metadata anchored at the symbol origin.
+    """
     x_k, y_k = mcp_to_kicad_xy(x_mcp, y_mcp, page_h)
     x_k, y_k = round_mm(x_k), round_mm(y_k)
 
     inst_uuid = str(uuid.uuid4())
 
-    # Properties — text positioned at the symbol origin; KiCAD will adjust on first
-    # render. We hide Footprint/Datasheet/Description since they are mostly metadata.
-    def _prop(name: str, val: str, hide: bool) -> list:
-        node: list[Any] = [
-            sym("property"),
-            name,
-            val,
-            [sym("at"), x_k, y_k, 0],
-        ]
+    def _prop(
+        name: str,
+        val: str,
+        hide: bool,
+        at: tuple[float, float, float] = (x_k, y_k, 0),
+        justify: list | None = None,
+    ) -> list:
+        node: list[Any] = [sym("property"), name, val, [sym("at"), *at]]
         effects: list[Any] = [sym("effects"), [sym("font"), [sym("size"), 1.27, 1.27]]]
+        if justify:
+            effects.append([sym("justify"), *justify])
         if hide:
             effects.append([sym("hide"), sym("yes")])
         node.append(effects)
         return node
+
+    is_power = sym_def_node is not None and find_child(sym_def_node, "power") is not None
+    if sym_def_node is None:
+        ref_prop = _prop("Reference", reference, hide=False)
+        val_prop = _prop("Value", value, hide=False)
+    elif is_power:
+        ref_prop = _prop("Reference", reference, hide=True)
+        val_prop = _power_value_prop(sym_def_node, value, x_k, y_k, rotation_deg)
+    else:
+        ref_at, val_at, angle = place_ref_value(sym_def_node, x_k, y_k, rotation_deg)
+        ref_prop = _prop(
+            "Reference", reference, hide=False,
+            at=(ref_at[0], ref_at[1], angle), justify=[sym(ref_at[2])],
+        )
+        val_prop = _prop(
+            "Value", value, hide=False,
+            at=(val_at[0], val_at[1], angle), justify=[sym(val_at[2])],
+        )
 
     pin_nodes = [
         [sym("pin"), num, [sym("uuid"), str(uuid.uuid4())]]
@@ -263,8 +496,8 @@ def build_symbol_instance(
         [sym("on_board"), sym("yes")],
         [sym("dnp"), sym("no")],
         [sym("uuid"), inst_uuid],
-        _prop("Reference", reference, hide=False),
-        _prop("Value", value, hide=False),
+        ref_prop,
+        val_prop,
         _prop("Footprint", footprint, hide=True),
         _prop("Datasheet", datasheet, hide=True),
         _prop("Description", description, hide=True),
@@ -311,8 +544,12 @@ def add_symbol(
     if instance_path is None:
         instance_path = f"/{_schematic_uuid(tree)}"
 
-    # Inject the lib symbol definition (idempotent on qualified id).
     lib_entry_def = make_lib_symbol_entry(sym_def_node, qualified_lib_id)
+    x0, y0, x1, y1 = symbol_outline(lib_entry_def, *mcp_to_kicad_xy(x_mm, y_mm, page_h), rot)[0]
+    for corner in ((x0, y0), (x1, y1)):
+        require_inside_frame(tree, *corner, f"symbol {reference}")
+
+    # Inject the lib symbol definition (idempotent on qualified id).
     inject_lib_symbol(tree, lib_entry_def)
 
     pins = collect_pin_numbers(lib_entry_def)
@@ -330,6 +567,7 @@ def add_symbol(
         footprint=footprint,
         datasheet=datasheet,
         description=description,
+        sym_def_node=lib_entry_def,
     )
     tree.append(instance)
     return instance
@@ -355,19 +593,59 @@ def move_symbol(
     y_mm: float,
     rotation: float | None = None,
 ) -> None:
-    """Set absolute position (and optionally rotation) of an existing symbol."""
+    """Set absolute position (and optionally rotation) of an existing symbol.
+
+    Field positions are absolute in the file, so they move along: Reference
+    and Value are laid out again for the new placement, the other fields
+    shift by the same offset as the symbol.
+    """
     s_node = find_symbol_by_reference(tree, reference)
     if s_node is None:
         raise KeyError(f"no symbol with reference {reference!r}")
     page_h = page_height_mm(tree)
-    x_k, y_k = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    x_k, y_k = (round_mm(v) for v in mcp_to_kicad_xy(x_mm, y_mm, page_h))
     at = find_child(s_node, "at")
     if at is None or len(at) < 4:
         raise ValueError("symbol has malformed (at ...) node")
-    at[1] = round_mm(x_k)
-    at[2] = round_mm(y_k)
-    if rotation is not None:
-        at[3] = normalize_rotation(rotation)
+    rot = normalize_rotation(rotation) if rotation is not None else int(float(at[3]))
+    lib_id = find_child(s_node, "lib_id")
+    sym_def = find_lib_symbol_def(tree, lib_id[1]) if lib_id and len(lib_id) >= 2 else None
+    if sym_def is not None:
+        x0, y0, x1, y1 = symbol_outline(sym_def, x_k, y_k, rot)[0]
+        for corner in ((x0, y0), (x1, y1)):
+            require_inside_frame(tree, *corner, f"symbol {reference}")
+
+    dx, dy = x_k - float(at[1]), y_k - float(at[2])
+    at[1], at[2], at[3] = x_k, y_k, rot
+    for prop in find_children(s_node, "property"):
+        p_at = find_child(prop, "at")
+        if p_at is not None and len(p_at) >= 3:
+            p_at[1] = round_mm(float(p_at[1]) + dx)
+            p_at[2] = round_mm(float(p_at[2]) + dy)
+    if sym_def is not None:
+        _relayout_ref_value(s_node, sym_def, x_k, y_k, rot)
+
+
+def _relayout_ref_value(s_node: list, sym_def: list, x_k: float, y_k: float, rot: int) -> None:
+    """Re-place an instance's Reference/Value the way `build_symbol_instance` does."""
+    props = {p[1]: p for p in find_children(s_node, "property") if len(p) >= 3}
+    if find_child(sym_def, "power") is not None:
+        if "Value" in props:
+            fresh = _power_value_prop(sym_def, props["Value"][2], x_k, y_k, rot)
+            props["Value"][3:] = fresh[3:]
+        return
+    ref_at, val_at, angle = place_ref_value(sym_def, x_k, y_k, rot)
+    for name, (fx, fy, justify) in (("Reference", ref_at), ("Value", val_at)):
+        prop = props.get(name)
+        if prop is None:
+            continue
+        p_at = find_child(prop, "at")
+        if p_at is not None:
+            p_at[1:] = [fx, fy, angle]
+        effects = find_child(prop, "effects")
+        if effects is not None:
+            effects[1:] = [c for c in effects[1:] if not is_call(c, "justify")]
+            effects.insert(2, [sym("justify"), sym(justify)])
 
 
 def add_wire(
@@ -377,22 +655,105 @@ def add_wire(
     x2_mm: float,
     y2_mm: float,
 ) -> list:
-    """Append a (wire ...) segment between two MCP-coord points. Returns the new node."""
+    """Append a (wire ...) segment between two MCP-coord points. Returns the new node.
+
+    Adds junctions where the new wire makes three or more connections meet at
+    one point (e.g. a T onto the middle of an existing wire). KiCAD only joins
+    a wire end to the interior of another wire through a junction.
+    """
     page_h = page_height_mm(tree)
-    x1k, y1k = mcp_to_kicad_xy(x1_mm, y1_mm, page_h)
-    x2k, y2k = mcp_to_kicad_xy(x2_mm, y2_mm, page_h)
+    x1k, y1k = (round_mm(v) for v in mcp_to_kicad_xy(x1_mm, y1_mm, page_h))
+    x2k, y2k = (round_mm(v) for v in mcp_to_kicad_xy(x2_mm, y2_mm, page_h))
+    require_inside_frame(tree, x1k, y1k, "wire start")
+    require_inside_frame(tree, x2k, y2k, "wire end")
     node = [
         sym("wire"),
         [
             sym("pts"),
-            [sym("xy"), round_mm(x1k), round_mm(y1k)],
-            [sym("xy"), round_mm(x2k), round_mm(y2k)],
+            [sym("xy"), x1k, y1k],
+            [sym("xy"), x2k, y2k],
         ],
         [sym("stroke"), [sym("width"), 0], [sym("type"), sym("default")]],
         [sym("uuid"), str(uuid.uuid4())],
     ]
     tree.append(node)
+    _add_needed_junctions(tree, node)
     return node
+
+
+def add_junction(tree: list, x_k: float, y_k: float) -> list:
+    """Append a (junction ...) at a point in KiCAD file coords."""
+    node = [
+        sym("junction"),
+        [sym("at"), round_mm(x_k), round_mm(y_k)],
+        [sym("diameter"), 0],
+        [sym("color"), 0, 0, 0, 0],
+        [sym("uuid"), str(uuid.uuid4())],
+    ]
+    tree.append(node)
+    return node
+
+
+def _wire_ends(wire: list) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    pts = find_child(wire, "pts")
+    xys = [_xy(c) for c in find_children(pts or [], "xy")]
+    if len(xys) < 2 or None in xys[:2]:
+        return None
+    return xys[0], xys[1]  # type: ignore[return-value]
+
+
+def _same(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return abs(a[0] - b[0]) < 1e-4 and abs(a[1] - b[1]) < 1e-4
+
+
+def _strictly_inside(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> bool:
+    """True if `p` lies on segment a-b but is not one of its ends."""
+    if _same(p, a) or _same(p, b):
+        return False
+    cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+    if abs(cross) > 1e-4:
+        return False
+    return (
+        min(a[0], b[0]) - 1e-4 <= p[0] <= max(a[0], b[0]) + 1e-4
+        and min(a[1], b[1]) - 1e-4 <= p[1] <= max(a[1], b[1]) + 1e-4
+    )
+
+
+def _pin_points_file(tree: list) -> list[tuple[float, float]]:
+    """Connection points of every placed symbol's pins, in KiCAD file coords."""
+    page_h = page_height_mm(tree)
+    out = []
+    for s_node in iter_instance_symbols(tree):
+        ref = get_symbol_property(s_node, "Reference")
+        if not ref:
+            continue
+        try:
+            pins = list_pins_for_symbol(tree, ref)
+        except (KeyError, ValueError):
+            continue
+        out += [(p["position_mm"][0], page_h - p["position_mm"][1]) for p in pins]
+    return out
+
+
+def _add_needed_junctions(tree: list, new_wire: list) -> None:
+    ends = _wire_ends(new_wire)
+    if ends is None:
+        return
+    wires = [w for w in (_wire_ends(c) for c in tree[1:] if is_call(c, "wire")) if w]
+    junctions = [_xy(find_child(c, "at")) for c in tree[1:] if is_call(c, "junction")]
+    pins = _pin_points_file(tree)
+    candidates = list(ends) + [
+        p for p in [e for w in wires for e in w] + pins if _strictly_inside(p, *ends)
+    ]
+    for p in candidates:
+        if any(j and _same(p, j) for j in junctions):
+            continue
+        links = sum(1 for w in wires for e in w if _same(p, e))
+        links += sum(2 for w in wires if _strictly_inside(p, *w))
+        links += sum(1 for pin in pins if _same(p, pin))
+        if links >= 3:
+            add_junction(tree, *p)
+            junctions.append(p)
 
 
 def add_label(
@@ -405,6 +766,7 @@ def add_label(
     """Append a (label ...) at a point. orientation ∈ {right, up, left, down}."""
     page_h = page_height_mm(tree)
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    require_inside_frame(tree, xk, yk, f"label {net_name}")
     angle_map = {"right": 0, "up": 90, "left": 180, "down": 270}
     if orientation not in angle_map:
         raise ValueError(f"orientation must be one of {list(angle_map)}")

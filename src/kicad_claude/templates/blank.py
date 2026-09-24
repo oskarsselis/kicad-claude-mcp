@@ -49,7 +49,9 @@ def _blank_pro(name: str) -> dict:
             "meta": {"version": 0},
         },
         "pcbnew": {"page_layout_descr_file": ""},
-        "schematic": {},
+        # 100 mil connection grid (KiCAD's default is 50 mil); ERC flags
+        # pin and wire ends that are off it.
+        "schematic": {"connection_grid_size": 100.0},
         "sheets": [],
         "text_variables": {},
     }

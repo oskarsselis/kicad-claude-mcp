@@ -295,9 +295,9 @@ def test_move_then_remove_via_tools(blank_project, tmp_path, monkeypatch):
     tree = sch_io.parse_file(blank_project["sch"])
     s = ed.find_symbol_by_reference(tree, "R1")
     at = sch_io.find_child(s, "at")
-    # In KiCAD coords: x=50, y=210-60=150, rot=90
+    # In KiCAD coords: x=50, y=208.28-60 (A4 height rounded down to 100 mil), rot=90
     assert at[1] == 50.0
-    assert at[2] == 150.0
+    assert at[2] == 148.28
     assert at[3] == 90
     # Now remove
     _call(mcp, "remove_symbol", reference="R1")
