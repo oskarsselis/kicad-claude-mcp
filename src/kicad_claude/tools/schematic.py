@@ -129,8 +129,10 @@ def register(mcp) -> None:
             reference: schematic-unique reference designator (e.g. "R1", "U2")
             value: human-visible value ("10k", "100uF", ...)
             x_mm, y_mm: position, MCP coords: mm, origin at the page's
-                bottom-left, Y up. Keep pin ends on the 100 mil (2.54 mm)
-                grid; placements outside the drawing frame are refused.
+                bottom-left, Y up. Pin ends must land on the 100 mil
+                (2.54 mm) grid: symbols with pins 150 mil from their origin
+                (e.g. Device:R) sit half a step off grid. Off-grid or
+                off-sheet placements are refused, naming a valid position.
             rotation: 0/90/180/270 degrees CCW
 
         Returns the placed symbol's identity. Refuses if `reference` already exists.
@@ -187,7 +189,10 @@ def register(mcp) -> None:
         y_mm: float,
         rotation: float | None = None,
     ) -> dict:
-        """Move (and optionally rotate) an existing symbol. Absolute positioning."""
+        """Move (and optionally rotate) an existing symbol. Absolute positioning.
+
+        Same rules as add_symbol: pin ends on the 100 mil grid, inside the frame.
+        """
         tree, path = _load_active_schematic()
         ed.move_symbol(tree, reference, x_mm, y_mm, rotation)
         backup = _save_with_backup(tree, path)
@@ -200,7 +205,11 @@ def register(mcp) -> None:
 
     @mcp.tool()
     def add_wire(x1_mm: float, y1_mm: float, x2_mm: float, y2_mm: float) -> dict:
-        """Add a straight wire segment between two points (MCP coords)."""
+        """Add a straight wire segment between two points (MCP coords).
+
+        Both ends must be on the 100 mil (2.54 mm) grid. Junctions are added
+        automatically where three or more connections meet.
+        """
         tree, path = _load_active_schematic()
         ed.add_wire(tree, x1_mm, y1_mm, x2_mm, y2_mm)
         backup = _save_with_backup(tree, path)
@@ -217,7 +226,10 @@ def register(mcp) -> None:
         y_mm: float,
         orientation: str = "right",
     ) -> dict:
-        """Add a net label at a point. orientation ∈ {right, up, left, down}."""
+        """Add a net label at a point. orientation ∈ {right, up, left, down}.
+
+        The point must be on the 100 mil (2.54 mm) grid, on a wire.
+        """
         tree, path = _load_active_schematic()
         ed.add_label(tree, net_name, x_mm, y_mm, orientation)
         backup = _save_with_backup(tree, path)

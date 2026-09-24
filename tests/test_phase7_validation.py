@@ -209,9 +209,9 @@ def test_validation_tools_on_voltage_divider(tmp_path):
         return mcp._tool_manager.get_tool(name).fn(**kw)
 
     # Schematic side
-    call("add_power_symbol", net="+5V", x_mm=100, y_mm=160)
-    call("add_symbol", lib_id="Device:R", reference="R1", value="10k", x_mm=100, y_mm=130)
-    call("add_power_symbol", net="GND", x_mm=100, y_mm=100)
+    call("add_power_symbol", net="+5V", x_mm=101.6, y_mm=160.02)
+    call("add_symbol", lib_id="Device:R", reference="R1", value="10k", x_mm=101.6, y_mm=130.81)
+    call("add_power_symbol", net="GND", x_mm=101.6, y_mm=101.6)
 
     # PCB side
     call("set_board_outline", width_mm=50, height_mm=30)

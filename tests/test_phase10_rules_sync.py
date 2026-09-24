@@ -107,14 +107,14 @@ def _build_sch_with_unannotated_resistors(tmp_path: Path):
     fixtures = Path(__file__).parent / "fixtures"
     sym_def = sch_ed.fetch_symbol_def(fixtures / "MiniLib.kicad_sym", "Resistor")
     tree = sch_io.parse_file(files["sch"])
-    for i, y in enumerate((140, 100, 60), start=1):
+    for i, y in enumerate((139.7, 101.6, 60.96), start=1):
         defn = sch_ed.fetch_symbol_def(fixtures / "MiniLib.kicad_sym", "Resistor")
         sch_ed.add_symbol(
             tree,
             qualified_lib_id="MiniLib:Resistor",
             reference="R?",
             value=f"{i}k",
-            x_mm=100, y_mm=y, rotation=0,
+            x_mm=101.6, y_mm=y, rotation=0,
             sym_def_node=defn,
             project_name="p",
         )
@@ -139,11 +139,11 @@ def test_annotate_tree_continues_after_existing(tmp_path: Path):
     state.set_active(tmp_path / "q", "q")
     fixtures = Path(__file__).parent / "fixtures"
     tree = sch_io.parse_file(files["sch"])
-    for ref, y in (("R5", 140), ("R?", 100)):
+    for ref, y in (("R5", 139.7), ("R?", 101.6)):
         defn = sch_ed.fetch_symbol_def(fixtures / "MiniLib.kicad_sym", "Resistor")
         sch_ed.add_symbol(
             tree, qualified_lib_id="MiniLib:Resistor",
-            reference=ref, value="1k", x_mm=100, y_mm=y, rotation=0,
+            reference=ref, value="1k", x_mm=101.6, y_mm=y, rotation=0,
             sym_def_node=defn, project_name="q",
         )
     sch_io.write_file(files["sch"], tree)
@@ -173,7 +173,7 @@ def test_existing_max_per_prefix(tmp_path: Path):
         defn = sch_ed.fetch_symbol_def(fixtures / "MiniLib.kicad_sym", "Resistor")
         sch_ed.add_symbol(
             tree, qualified_lib_id="MiniLib:Resistor",
-            reference=ref, value="x", x_mm=100, y_mm=100, rotation=0,
+            reference=ref, value="x", x_mm=101.6, y_mm=101.6, rotation=0,
             sym_def_node=defn, project_name="x",
         )
     counts = annotation.existing_max_per_prefix(tree)
@@ -309,21 +309,21 @@ def test_acceptance_full_flow_routes_real_track(tmp_path: Path):
         return mcp._tool_manager.get_tool(name).fn(**kw)
 
     # Schematic
-    call("add_power_symbol", net="+5V", x_mm=100, y_mm=160)
+    call("add_power_symbol", net="+5V", x_mm=101.6, y_mm=160.02)
     call("add_symbol", lib_id="Device:R", reference="R?", value="10k",
-         x_mm=100, y_mm=130)
+         x_mm=101.6, y_mm=130.81)
     call("add_symbol", lib_id="Device:R", reference="R?", value="1k",
-         x_mm=100, y_mm=80)
-    call("add_power_symbol", net="GND", x_mm=100, y_mm=40)
+         x_mm=101.6, y_mm=80.01)
+    call("add_power_symbol", net="GND", x_mm=101.6, y_mm=40.64)
     call("annotate_schematic")
     # Wire using pin positions so the netlist resolves cleanly
     r1p1 = call("get_pin_position", reference="R1", pin="1")["position_mm"]
     r1p2 = call("get_pin_position", reference="R1", pin="2")["position_mm"]
     r2p1 = call("get_pin_position", reference="R2", pin="1")["position_mm"]
     r2p2 = call("get_pin_position", reference="R2", pin="2")["position_mm"]
-    call("add_wire", x1_mm=100, y1_mm=160, x2_mm=r1p1[0], y2_mm=r1p1[1])
+    call("add_wire", x1_mm=101.6, y1_mm=160.02, x2_mm=r1p1[0], y2_mm=r1p1[1])
     call("add_wire", x1_mm=r1p2[0], y1_mm=r1p2[1], x2_mm=r2p1[0], y2_mm=r2p1[1])
-    call("add_wire", x1_mm=r2p2[0], y1_mm=r2p2[1], x2_mm=100, y2_mm=40)
+    call("add_wire", x1_mm=r2p2[0], y1_mm=r2p2[1], x2_mm=101.6, y2_mm=40.64)
 
     # PCB
     call("set_board_outline", width_mm=50, height_mm=30)

@@ -216,16 +216,16 @@ def blank_sch(tmp_path: Path):
 
 def test_add_bus_segment_appends_node(blank_sch):
     tree = sch_io.parse_file(blank_sch["sch"])
-    sch_ed.add_bus_segment(tree, 50, 50, 100, 50)
+    sch_ed.add_bus_segment(tree, 50.8, 50.8, 101.6, 50.8)
     assert len(sch_io.find_children(tree, "bus")) == 1
 
 
 def test_add_bus_entry_validates_direction(blank_sch):
     tree = sch_io.parse_file(blank_sch["sch"])
-    sch_ed.add_bus_entry(tree, 60, 50, direction="right_down")
+    sch_ed.add_bus_entry(tree, 60.96, 50.8, direction="right_down")
     assert len(sch_io.find_children(tree, "bus_entry")) == 1
     with pytest.raises(ValueError):
-        sch_ed.add_bus_entry(tree, 70, 50, direction="upside-down")
+        sch_ed.add_bus_entry(tree, 71.12, 50.8, direction="upside-down")
 
 
 def test_add_bus_alias_writes_members(blank_sch):
@@ -364,7 +364,7 @@ def test_acceptance_phase12_full(tmp_path: Path):
          target_length_mm=55, amplitude_mm=2, side="up", net_name="USB_DP")
 
     # Schematic: add a bus + alias
-    call("add_bus", x1_mm=80, y1_mm=130, x2_mm=160, y2_mm=130)
+    call("add_bus", x1_mm=81.28, y1_mm=129.54, x2_mm=160.02, y2_mm=129.54)
     call("add_bus_alias", alias_name="DATA", members=[f"D{i}" for i in range(8)])
 
     # Both files must still parse.

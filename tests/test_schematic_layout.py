@@ -134,7 +134,9 @@ def test_wire_and_label_outside_frame_are_refused(tree):
 
 @pytest.mark.parametrize("rot", [0, 90, 180, 270])
 def test_ref_and_value_sit_outside_symbol_on_two_lines(tree, rot):
-    s = _place(tree, _RESISTOR, "R1", "L:R", 101.6, 100.33, rot)
+    # Pins are 150 mil from the centre along the body: offset that axis half a step.
+    x, y = (101.6, 100.33) if rot in (0, 180) else (100.33, 101.6)
+    s = _place(tree, _RESISTOR, "R1", "L:R", x, y, rot)
     at = sch_io.find_child(s, "at")
     bbox, _ = ed.symbol_outline(_def(_RESISTOR), float(at[1]), float(at[2]), rot)
     x0, y0, x1, y1 = bbox
@@ -228,3 +230,33 @@ def test_three_wire_ends_meeting_add_one_junction(tree):
     ed.add_wire(tree, 101.6, 114.3, 127.0, 114.3)
     ed.add_wire(tree, 88.9, 114.3, 101.6, 114.3)  # fourth end: still one junction
     assert len(_junctions(tree)) == 1
+
+
+# ===== 100 mil grid enforcement ============================================ #
+
+
+def test_off_grid_wire_is_refused_with_nearest_point(tree):
+    with pytest.raises(ValueError, match=r"off the 100 mil.*nearest on-grid point is \(101\.6, 101\.6\)"):
+        ed.add_wire(tree, 101.0, 101.6, 127.0, 101.6)
+    assert not sch_io.find_children(tree, "wire")
+
+
+def test_off_grid_label_is_refused(tree):
+    with pytest.raises(ValueError, match="off the 100 mil"):
+        ed.add_label(tree, "VOUT", 111.0, 121.92)
+
+
+def test_symbol_with_pins_off_grid_is_refused_with_suggestion(tree):
+    # Centre on grid puts Device:R-style pins (+/-150 mil) off grid.
+    with pytest.raises(ValueError, match=r"place it at MCP \(101\.6, 102\.87\)"):
+        _place(tree, _RESISTOR, "R1", "L:R", 101.6, 101.6)
+    assert ed.find_lib_symbol_def(tree, "L:R") is None  # nothing injected
+    _place(tree, _RESISTOR, "R1", "L:R", 101.6, 102.87)  # the suggestion works
+
+
+def test_move_symbol_off_grid_is_refused(tree):
+    _place(tree, _RESISTOR, "R1", "L:R", 101.6, 100.33)
+    with pytest.raises(ValueError, match="off the 100 mil"):
+        ed.move_symbol(tree, "R1", 101.6, 101.6)
+    s = ed.find_symbol_by_reference(tree, "R1")
+    assert float(sch_io.find_child(s, "at")[2]) == pytest.approx(ed.page_height_mm(tree) - 100.33)

@@ -154,7 +154,7 @@ def test_add_sheet_node_appends_and_blocks_duplicates(blank_project):
 def test_add_hierarchical_label_validates_shape(blank_project):
     tree = sch_io.parse_file(blank_project["sch"])
     sch_ed.add_hierarchical_label(
-        tree, net_name="+5V", x_mm=50, y_mm=50, shape="input",
+        tree, net_name="+5V", x_mm=50.8, y_mm=50.8, shape="input",
     )
     labels = sch_io.find_children(tree, "hierarchical_label")
     assert len(labels) == 1
@@ -196,7 +196,7 @@ def test_hierarchy_round_trip(blank_project, tmp_path, monkeypatch):
     assert _call(mcp, "get_active_sheet")["active_sheet"] == "root"
 
     # Create a child and switch to it
-    res = _call(mcp, "add_sheet", sheet_name="Power", x_mm=70, y_mm=120)
+    res = _call(mcp, "add_sheet", sheet_name="Power", x_mm=71.12, y_mm=119.38)
     assert Path(res["child_path"]).is_file()
 
     sheets = _call(mcp, "list_sheets")
@@ -209,15 +209,15 @@ def test_hierarchy_round_trip(blank_project, tmp_path, monkeypatch):
     # Add a symbol in the child — instance path must reference root_uuid + sheet_uuid
     _call(mcp, "add_symbol",
           lib_id="MiniLib:Resistor", reference="R1", value="10k",
-          x_mm=80, y_mm=80)
+          x_mm=81.28, y_mm=81.28)
     _call(mcp, "add_hierarchical_label",
-          net_name="+5V", x_mm=60, y_mm=80, shape="input")
+          net_name="+5V", x_mm=60.96, y_mm=81.28, shape="input")
 
     # Back to root + add a sheet pin
     _call(mcp, "set_active_sheet", sheet="root")
     _call(mcp, "add_sheet_pin",
           sheet_name="Power", pin_name="+5V", shape="input",
-          x_mm=70, y_mm=130)
+          x_mm=71.12, y_mm=129.54)
 
     # Verify symbol instance path in the child file uses /<root>/<sheet>
     proj = state.get_active()
@@ -282,20 +282,20 @@ def test_acceptance_hierarchy_kicad_cli(tmp_path):
         return mcp._tool_manager.get_tool(name).fn(**kw)
 
     # Root: power supply on a sub-sheet, peripherals on another
-    call("add_sheet", sheet_name="PSU", x_mm=50, y_mm=140)
-    call("add_sheet", sheet_name="Periph", x_mm=110, y_mm=140)
+    call("add_sheet", sheet_name="PSU", x_mm=50.8, y_mm=139.7)
+    call("add_sheet", sheet_name="Periph", x_mm=109.22, y_mm=139.7)
 
     # Inside PSU: +5V → R1 → GND
     call("set_active_sheet", sheet="PSU")
-    call("add_power_symbol", net="+5V", x_mm=60, y_mm=120)
+    call("add_power_symbol", net="+5V", x_mm=60.96, y_mm=119.38)
     call("add_symbol", lib_id="Device:R", reference="R1", value="10k",
-         x_mm=60, y_mm=90)
-    call("add_power_symbol", net="GND", x_mm=60, y_mm=70)
+         x_mm=60.96, y_mm=90.17)
+    call("add_power_symbol", net="GND", x_mm=60.96, y_mm=71.12)
 
     # Inside Periph: another resistor
     call("set_active_sheet", sheet="Periph")
     call("add_symbol", lib_id="Device:R", reference="R2", value="1k",
-         x_mm=60, y_mm=90)
+         x_mm=60.96, y_mm=90.17)
 
     # Back to root
     call("set_active_sheet", sheet="")

@@ -110,7 +110,7 @@ def blank_project(tmp_path: Path):
 def test_add_wire_then_round_trip(blank_project):
     sch_path = blank_project["sch"]
     tree = sch_io.parse_file(sch_path)
-    ed.add_wire(tree, 50, 50, 80, 50)
+    ed.add_wire(tree, 50.8, 50.8, 81.28, 50.8)
     sch_io.write_file(sch_path, tree)
     tree2 = sch_io.parse_file(sch_path)
     wires = sch_io.find_children(tree2, "wire")
@@ -120,7 +120,7 @@ def test_add_wire_then_round_trip(blank_project):
 def test_add_label_then_read_back(blank_project):
     sch_path = blank_project["sch"]
     tree = sch_io.parse_file(sch_path)
-    ed.add_label(tree, "VBUS", 60, 100, "right")
+    ed.add_label(tree, "VBUS", 60.96, 101.6, "right")
     sch_io.write_file(sch_path, tree)
     tree2 = sch_io.parse_file(sch_path)
     labels = sch_io.find_children(tree2, "label")
@@ -158,8 +158,8 @@ def test_add_symbol_via_editor(blank_project, tmp_path, monkeypatch):
         qualified_lib_id="MiniLib:Resistor",
         reference="R1",
         value="10k",
-        x_mm=100,
-        y_mm=80,
+        x_mm=101.6,
+        y_mm=78.74,
         rotation=0,
         sym_def_node=sym_def,
         project_name="demo",
@@ -185,8 +185,8 @@ def test_get_pin_position_for_symbol_at_origin(blank_project):
         qualified_lib_id="MiniLib:Resistor",
         reference="R1",
         value="10k",
-        x_mm=100,
-        y_mm=100,
+        x_mm=101.6,
+        y_mm=101.6,
         rotation=0,
         sym_def_node=sym_def,
         project_name="demo",
@@ -195,13 +195,13 @@ def test_get_pin_position_for_symbol_at_origin(blank_project):
     assert len(pins) == 2
     by_num = {p["number"]: p for p in pins}
     # In MCP coords (Y up), the lib pin at lib-y=2.54 is BELOW symbol origin
-    # (KiCAD lib Y is "down"), so MCP-y < 100. Pin at lib-y=-2.54 is above.
-    assert by_num["1"]["position_mm"][0] == 100.0
-    assert by_num["2"]["position_mm"][0] == 100.0
+    # (KiCAD lib Y is "down"), so MCP-y < 101.6. Pin at lib-y=-2.54 is above.
+    assert by_num["1"]["position_mm"][0] == 101.6
+    assert by_num["2"]["position_mm"][0] == 101.6
     # Symmetry: pin1 and pin2 mirror around symbol y
     y1 = by_num["1"]["position_mm"][1]
     y2 = by_num["2"]["position_mm"][1]
-    assert math.isclose(y1 + y2, 200.0, abs_tol=0.01)  # 2 * symbol_y_mcp
+    assert math.isclose(y1 + y2, 203.2, abs_tol=0.01)  # 2 * symbol_y_mcp
 
 
 def test_remove_symbol_returns_false_when_missing(blank_project):
@@ -218,8 +218,8 @@ def test_duplicate_reference_rejected(blank_project):
         qualified_lib_id="MiniLib:Resistor",
         reference="R1",
         value="10k",
-        x_mm=100,
-        y_mm=80,
+        x_mm=101.6,
+        y_mm=78.74,
         rotation=0,
         sym_def_node=sym_def,
         project_name="demo",
@@ -232,8 +232,8 @@ def test_duplicate_reference_rejected(blank_project):
             qualified_lib_id="MiniLib:Resistor",
             reference="R1",
             value="other",
-            x_mm=120,
-            y_mm=80,
+            x_mm=121.92,
+            y_mm=78.74,
             rotation=0,
             sym_def_node=sym_def2,
             project_name="demo",
@@ -269,8 +269,8 @@ def test_add_symbol_tool_writes_schematic(blank_project, tmp_path, monkeypatch):
         lib_id="MiniLib:Resistor",
         reference="R1",
         value="10k",
-        x_mm=100,
-        y_mm=80,
+        x_mm=101.6,
+        y_mm=78.74,
     )
     assert res["reference"] == "R1"
     assert res["pin_count"] == 2
@@ -281,23 +281,23 @@ def test_add_symbol_tool_writes_schematic(blank_project, tmp_path, monkeypatch):
 
 def test_get_pin_position_tool(blank_project, tmp_path, monkeypatch):
     mcp = _make_mcp_with_fixture_index(monkeypatch, tmp_path)
-    _call(mcp, "add_symbol", lib_id="MiniLib:Resistor", reference="R1", value="10k", x_mm=100, y_mm=100)
+    _call(mcp, "add_symbol", lib_id="MiniLib:Resistor", reference="R1", value="10k", x_mm=101.6, y_mm=101.6)
     res = _call(mcp, "get_pin_position", reference="R1", pin="1")
     assert res["reference"] == "R1"
     assert res["pin"] == "1"
-    assert res["position_mm"][0] == 100.0
+    assert res["position_mm"][0] == 101.6
 
 
 def test_move_then_remove_via_tools(blank_project, tmp_path, monkeypatch):
     mcp = _make_mcp_with_fixture_index(monkeypatch, tmp_path)
-    _call(mcp, "add_symbol", lib_id="MiniLib:Resistor", reference="R1", value="10k", x_mm=100, y_mm=100)
-    _call(mcp, "move_symbol", reference="R1", x_mm=50, y_mm=60, rotation=90)
+    _call(mcp, "add_symbol", lib_id="MiniLib:Resistor", reference="R1", value="10k", x_mm=101.6, y_mm=101.6)
+    _call(mcp, "move_symbol", reference="R1", x_mm=50.8, y_mm=60.96, rotation=90)
     tree = sch_io.parse_file(blank_project["sch"])
     s = ed.find_symbol_by_reference(tree, "R1")
     at = sch_io.find_child(s, "at")
-    # In KiCAD coords: x=50, y=208.28-60 (A4 height rounded down to 100 mil), rot=90
-    assert at[1] == 50.0
-    assert at[2] == 148.28
+    # In KiCAD coords: x=50.8, y=208.28-60.96 (A4 height rounded down to 100 mil), rot=90
+    assert at[1] == 50.8
+    assert at[2] == 147.32
     assert at[3] == 90
     # Now remove
     _call(mcp, "remove_symbol", reference="R1")
@@ -330,18 +330,24 @@ def test_voltage_divider_acceptance(tmp_path):
     sch_tools.register(mcp)
     lib_tools.register(mcp)
 
-    # Layout: vertical strip at x=100, +5V at top (y=160), GND at bottom (y=40).
-    _call(mcp, "add_power_symbol", net="+5V", x_mm=100, y_mm=160)
+    # Layout: vertical strip at x=101.6, +5V at top, GND at bottom. Device:R
+    # pins are 3.81 mm from its centre, so centres sit half a grid step off.
+    _call(mcp, "add_power_symbol", net="+5V", x_mm=101.6, y_mm=160.02)
     _call(mcp, "add_symbol", lib_id="Device:R", reference="R1", value="10k",
-          x_mm=100, y_mm=130)
+          x_mm=101.6, y_mm=130.81)
     _call(mcp, "add_symbol", lib_id="Device:R", reference="R2", value="1k",
-          x_mm=100, y_mm=80)
-    _call(mcp, "add_power_symbol", net="GND", x_mm=100, y_mm=40)
+          x_mm=101.6, y_mm=80.01)
+    _call(mcp, "add_power_symbol", net="GND", x_mm=101.6, y_mm=40.64)
 
-    # Wire R1 between +5V and the mid-node
-    _call(mcp, "add_wire", x1_mm=100, y1_mm=160, x2_mm=100, y2_mm=140)  # +5V → R1.top
-    _call(mcp, "add_wire", x1_mm=100, y1_mm=120, x2_mm=100, y2_mm=90)   # R1.bot → R2.top
-    _call(mcp, "add_wire", x1_mm=100, y1_mm=70, x2_mm=100, y2_mm=40)    # R2.bot → GND
+    def pin(ref, num):
+        return _call(mcp, "get_pin_position", reference=ref, pin=num)["position_mm"]
+
+    for (x1, y1), (x2, y2) in (
+        ((101.6, 160.02), pin("R1", "1")),  # +5V -> R1.top
+        (pin("R1", "2"), pin("R2", "1")),   # R1.bot -> R2.top
+        (pin("R2", "2"), (101.6, 40.64)),   # R2.bot -> GND
+    ):
+        _call(mcp, "add_wire", x1_mm=x1, y1_mm=y1, x2_mm=x2, y2_mm=y2)
 
     sch_path = files["sch"]
     state.clear_active()

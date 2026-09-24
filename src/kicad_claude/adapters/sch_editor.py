@@ -115,6 +115,48 @@ def require_inside_frame(tree: list, x_k: float, y_k: float, what: str) -> None:
         )
 
 
+def _snap(v: float) -> float:
+    return round_mm(round(v / SCH_GRID_MM) * SCH_GRID_MM)
+
+
+def _on_grid(v: float) -> bool:
+    return abs(v - _snap(v)) < 1e-3
+
+
+def require_on_grid(x_k: float, y_k: float, what: str, page_h: float) -> None:
+    """Refuse a connection point (KiCAD coords) that is off the 100 mil grid."""
+    if _on_grid(x_k) and _on_grid(y_k):
+        return
+    raise ValueError(
+        f"{what}: MCP point ({round_mm(x_k)}, {round_mm(page_h - y_k)}) is off the "
+        f"100 mil (2.54 mm) grid; nearest on-grid point is "
+        f"({_snap(x_k)}, {round_mm(page_h - _snap(y_k))})"
+    )
+
+
+def require_pins_on_grid(
+    sym_def: list, x_k: float, y_k: float, rot: int, reference: str, page_h: float
+) -> None:
+    """Refuse a symbol placement whose visible pin ends miss the 100 mil grid.
+
+    The symbol origin itself may be off grid (Device:R pins are 150 mil from
+    its centre); the error names the nearest origin that puts the pins on it.
+    """
+    pin_ends = symbol_outline(sym_def, x_k, y_k, rot)[1]
+    if all(_on_grid(px) and _on_grid(py) for px, py in pin_ends):
+        return
+    px, py = pin_ends[0]
+    dx, dy = _snap(px) - px, _snap(py) - py
+    if all(_on_grid(qx + dx) and _on_grid(qy + dy) for qx, qy in pin_ends):
+        hint = (
+            f"place it at MCP ({round_mm(x_k + dx)}, {round_mm(page_h - (y_k + dy))}) "
+            f"instead"
+        )
+    else:
+        hint = "its pins are not on a common 100 mil grid in the library"
+    raise ValueError(f"symbol {reference}: pin ends are off the 100 mil grid; {hint}")
+
+
 # --------------------------------------------------------------------------- #
 # Symbol instance lookup
 # --------------------------------------------------------------------------- #
@@ -548,6 +590,9 @@ def add_symbol(
     x0, y0, x1, y1 = symbol_outline(lib_entry_def, *mcp_to_kicad_xy(x_mm, y_mm, page_h), rot)[0]
     for corner in ((x0, y0), (x1, y1)):
         require_inside_frame(tree, *corner, f"symbol {reference}")
+    require_pins_on_grid(
+        lib_entry_def, *mcp_to_kicad_xy(x_mm, y_mm, page_h), rot, reference, page_h
+    )
 
     # Inject the lib symbol definition (idempotent on qualified id).
     inject_lib_symbol(tree, lib_entry_def)
@@ -614,6 +659,7 @@ def move_symbol(
         x0, y0, x1, y1 = symbol_outline(sym_def, x_k, y_k, rot)[0]
         for corner in ((x0, y0), (x1, y1)):
             require_inside_frame(tree, *corner, f"symbol {reference}")
+        require_pins_on_grid(sym_def, x_k, y_k, rot, reference, page_h)
 
     dx, dy = x_k - float(at[1]), y_k - float(at[2])
     at[1], at[2], at[3] = x_k, y_k, rot
@@ -666,6 +712,8 @@ def add_wire(
     x2k, y2k = (round_mm(v) for v in mcp_to_kicad_xy(x2_mm, y2_mm, page_h))
     require_inside_frame(tree, x1k, y1k, "wire start")
     require_inside_frame(tree, x2k, y2k, "wire end")
+    require_on_grid(x1k, y1k, "wire start", page_h)
+    require_on_grid(x2k, y2k, "wire end", page_h)
     node = [
         sym("wire"),
         [
@@ -767,6 +815,7 @@ def add_label(
     page_h = page_height_mm(tree)
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
     require_inside_frame(tree, xk, yk, f"label {net_name}")
+    require_on_grid(xk, yk, f"label {net_name}", page_h)
     angle_map = {"right": 0, "up": 90, "left": 180, "down": 270}
     if orientation not in angle_map:
         raise ValueError(f"orientation must be one of {list(angle_map)}")
@@ -789,6 +838,7 @@ def add_no_connect(tree: list, x_mm: float, y_mm: float) -> list:
     """Append a (no_connect ...) marker at a point."""
     page_h = page_height_mm(tree)
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    require_on_grid(xk, yk, "no-connect", page_h)
     node = [
         sym("no_connect"),
         [sym("at"), round_mm(xk), round_mm(yk)],
@@ -814,6 +864,8 @@ def add_bus_segment(
     page_h = page_height_mm(tree)
     x1k, y1k = mcp_to_kicad_xy(x1_mm, y1_mm, page_h)
     x2k, y2k = mcp_to_kicad_xy(x2_mm, y2_mm, page_h)
+    require_on_grid(x1k, y1k, "bus start", page_h)
+    require_on_grid(x2k, y2k, "bus end", page_h)
     node = [
         sym("bus"),
         [
@@ -855,6 +907,7 @@ def add_bus_entry(
     dx, dy = deltas[direction]
     page_h = page_height_mm(tree)
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    require_on_grid(xk, yk, "bus entry", page_h)
     node = [
         sym("bus_entry"),
         [sym("at"), round_mm(xk), round_mm(yk)],
@@ -1043,6 +1096,7 @@ def add_hierarchical_label(
         )
     page_h = page_height_mm(tree)
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    require_on_grid(xk, yk, f"hierarchical label {net_name}", page_h)
     node = [
         sym("hierarchical_label"),
         net_name,
@@ -1082,6 +1136,7 @@ def add_sheet_pin(
             f"orientation must be one of {list(_LABEL_ORIENTATIONS)}"
         )
     xk, yk = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    require_on_grid(xk, yk, f"sheet pin {pin_name}", page_h)
     pin_node = [
         sym("pin"),
         pin_name,
