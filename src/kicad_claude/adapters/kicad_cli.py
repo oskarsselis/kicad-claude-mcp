@@ -13,6 +13,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from kicad_claude.adapters import sch_editor, sch_io
+from kicad_claude.utils.geometry import DEFAULT_PAGE_HEIGHT_MM, kicad_to_mcp_xy, round_mm
 from kicad_claude.utils.kicad_paths import find_kicad_cli
 
 logger = logging.getLogger("kicad-claude.adapters.kicad_cli")
@@ -133,11 +135,40 @@ def run_erc(
         )
 
     data = json.loads(output_json.read_text(encoding="utf-8"))
-    return _shape_erc(data, output_json)
+    page_h = sch_editor.page_height_mm(sch_io.parse_file(sch_path))
+    return _shape_erc(data, output_json, page_h)
 
 
-def _shape_erc(data: dict, raw_path: Path) -> dict:
-    violations = data.get("violations") or []
+def _erc_violations(data: dict) -> list[dict]:
+    """Flatten ERC violations. kicad-cli nests them per sheet (`sheets[].violations`)."""
+    violations = list(data.get("violations") or [])
+    for sheet in data.get("sheets") or []:
+        violations.extend(sheet.get("violations") or [])
+    return violations
+
+
+def _fix_erc_positions(violations: list[dict], page_h: float) -> None:
+    """Convert ERC item positions to MCP coords (mm, Y up), in place.
+
+    kicad-cli (10.0.x) writes ERC positions with the PCB unit scale applied to
+    schematic units, so they come out 100x too small despite
+    `coordinate_units: mm`. Real positions can't all sit within a few mm of
+    the page origin (the drawing frame alone has a 10 mm margin), so scale
+    only when every position is that small; a fixed kicad-cli stays unscaled.
+    """
+    items = [it for v in violations for it in v.get("items") or [] if it.get("pos")]
+    if not items:
+        return
+    largest = max(max(abs(it["pos"].get("x", 0)), abs(it["pos"].get("y", 0))) for it in items)
+    scale = 100.0 if largest < 5.0 else 1.0
+    for it in items:
+        x, y = kicad_to_mcp_xy(it["pos"].get("x", 0) * scale, it["pos"].get("y", 0) * scale, page_h)
+        it["pos"] = {"x": round_mm(x), "y": round_mm(y)}
+
+
+def _shape_erc(data: dict, raw_path: Path, page_h: float = DEFAULT_PAGE_HEIGHT_MM) -> dict:
+    violations = _erc_violations(data)
+    _fix_erc_positions(violations, page_h)
     counts = _summarize_violations(violations)
     return {
         "kind": "erc",

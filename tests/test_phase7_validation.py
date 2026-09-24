@@ -27,49 +27,80 @@ from kicad_claude.utils.kicad_paths import find_kicad_cli
 # ===== Unit: JSON shaping ================================================== #
 
 
+# Shape of real `kicad-cli sch erc --format json` output (10.0.6): violations
+# nested per sheet, positions 100x too small despite `coordinate_units: mm`.
 _SAMPLE_ERC = {
     "$schema": "https://schemas.kicad.org/erc.v1.json",
     "source": "demo.kicad_sch",
     "kicad_version": "10.0.1",
     "date": "2026-05-09T21:00:00",
     "coordinate_units": "mm",
-    "violations": [
+    "included_severities": ["error", "warning", "exclusion"],
+    "ignored_checks": [],
+    "sheets": [
         {
-            "type": "lib_symbol_issues",
-            "severity": "warning",
-            "description": "Symbol library issue X",
-            "items": [
-                {"description": "On R1", "uuid": "u-1", "pos": {"x": 100, "y": 50}}
+            "path": "/",
+            "uuid_path": "/root-uuid",
+            "violations": [
+                {
+                    "type": "lib_symbol_issues",
+                    "severity": "warning",
+                    "description": "Symbol library issue X",
+                    "items": [
+                        {"description": "On R1", "uuid": "u-1", "pos": {"x": 1.016, "y": 1.0668}}
+                    ],
+                },
+                {
+                    "type": "power_pin_not_driven",
+                    "severity": "error",
+                    "description": "Input Power pin not driven by any Output Power pins",
+                    "items": [
+                        {"description": "On #PWR01", "uuid": "u-2", "pos": {"x": 0.8, "y": 0.7}}
+                    ],
+                },
             ],
         },
         {
-            "type": "pin_not_connected",
-            "severity": "error",
-            "description": "Pin not connected",
-            "items": [
-                {"description": "On U1 pin 5", "uuid": "u-2", "pos": {"x": 80, "y": 70}}
+            "path": "/sub/",
+            "uuid_path": "/root-uuid/sub-uuid",
+            "violations": [
+                {
+                    "type": "duplicate_reference",
+                    "severity": "error",
+                    "description": "Duplicate references",
+                    "items": [],
+                },
             ],
-        },
-        {
-            "type": "duplicate_reference",
-            "severity": "error",
-            "description": "Duplicate references",
-            "items": [],
         },
     ],
 }
 
 
-def test_shape_erc_counts_severities(tmp_path: Path):
+def test_shape_erc_counts_violations_across_sheets(tmp_path: Path):
     raw = tmp_path / "fake.json"
     raw.write_text(json.dumps(_SAMPLE_ERC))
-    shaped = kicad_cli._shape_erc(_SAMPLE_ERC, raw)
+    shaped = kicad_cli._shape_erc(json.loads(json.dumps(_SAMPLE_ERC)), raw, 208.28)
     assert shaped["kind"] == "erc"
     assert shaped["errors"] == 2
     assert shaped["warnings"] == 1
     assert shaped["total_violations"] == 3
     assert shaped["kicad_version"] == "10.0.1"
     assert len(shaped["violations"]) == 3
+
+
+def test_shape_erc_positions_in_mcp_coords(tmp_path: Path):
+    shaped = kicad_cli._shape_erc(json.loads(json.dumps(_SAMPLE_ERC)), tmp_path / "x.json", 208.28)
+    # (1.016, 1.0668) x 100 = file (101.6, 106.68) -> MCP (101.6, 208.28 - 106.68)
+    assert shaped["violations"][0]["items"][0]["position"] == [101.6, 101.6]
+
+
+def test_shape_erc_leaves_real_mm_positions_unscaled(tmp_path: Path):
+    data = {"sheets": [{"violations": [{
+        "type": "x", "severity": "error", "description": "",
+        "items": [{"description": "", "uuid": "u", "pos": {"x": 101.6, "y": 106.68}}],
+    }]}]}
+    shaped = kicad_cli._shape_erc(data, tmp_path / "x.json", 208.28)
+    assert shaped["violations"][0]["items"][0]["position"] == [101.6, 101.6]
 
 
 def test_shape_violation_extracts_position():
