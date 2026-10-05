@@ -63,7 +63,47 @@ from kicad_claude.utils.logging import setup_logging  # noqa: E402
 
 logger = setup_logging()
 
-mcp = FastMCP("kicad-claude")
+# Sent to every MCP client on connect, so these conventions apply on any
+# machine without local configuration.
+INSTRUCTIONS = """\
+KiCad MCP: conventions for drawing schematics.
+
+Coordinates: millimetres, origin at the bottom-left of the page, Y pointing up.
+On A4 the drawing frame spans x 10..287, y 8.28..198.28. The title block fills
+the bottom-right corner (about x > 177, y < 42 on A4): keep it clear. Put the
+circuit in the upper/middle part of the page.
+
+Projects: one folder per project, e.g. create_project(path="<parent>/<name>",
+name="<name>").
+
+Placement (the tools refuse off-grid and off-frame input and suggest a valid
+position; plan for it instead of trial and error):
+- Every connection point (pin end, wire end, label, junction) is on the
+  100 mil (2.54 mm) grid. Check pin offsets with get_symbol_details or
+  list_pins. Symbols whose pins sit 150 mil from their origin (Device:R,
+  Device:C, ...) need the origin half a step (1.27 mm) off grid along the
+  pin axis, e.g. a vertical resistor at y = 130.81.
+- Wire exactly to the positions list_pins reports. Junctions are added
+  automatically where three or more connections meet.
+- Reference and value are placed automatically beside each symbol, on the
+  side without pins. Leave room for that text (about 8-10 mm) and keep
+  symbols at least two grid steps apart. PWR_FLAG's label is wide: keep it
+  away from connectors and other symbols.
+- Power-symbol references are hidden automatically.
+- Add a PWR_FLAG to every supply and ground net that no power-output pin
+  drives (e.g. power arriving through a connector), or ERC reports
+  power_pin_not_driven.
+- Input connectors: Connector:Conn_01xNN_Pin has its pins on the right
+  (pin 1 at the top), so it suits inputs on the left side of the sheet.
+
+Finishing: after changing a schematic, call verify_schematic. Only report the
+schematic as done when `ok` is true; otherwise fix every item in `problems`.
+Compare `nets` with the intended circuit, and open the PDF it returns and
+look at it: the checks cannot judge readability or whether the circuit does
+what was asked. Report ERC results exactly as returned.
+"""
+
+mcp = FastMCP("kicad-claude", instructions=INSTRUCTIONS)
 
 
 @mcp.tool()

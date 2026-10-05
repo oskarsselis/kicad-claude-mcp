@@ -98,6 +98,7 @@ Add to `~/.claude/settings.json`:
 - **Buses**: `add_bus`, `add_bus_entry`, `add_bus_alias` — visual grouping of address/data lines
 - **Annotation**: `annotate_schematic` — auto-numbers `R?` → `R1, R2, ...` across all sheets
 - **Custom symbols**: `create_symbol` with full pin specifications
+- **Drawing conventions enforced**: connection points on the 100 mil grid, everything inside the drawing frame, reference/value laid out clear of the symbol, power references hidden, junctions added automatically. The server also sends its conventions to the AI client as MCP server instructions, so they apply on any machine.
 
 ### Library management
 
@@ -123,6 +124,7 @@ Add to `~/.claude/settings.json`:
 ### Validation
 
 - **ERC and DRC** — `run_erc`, `run_drc` shell out to `kicad-cli` and parse the JSON
+- **Schematic verification** — `verify_schematic` runs ERC, lists the nets, flags off-grid, off-frame and title-block items and crowded symbols, and exports a PDF to look at; `ok` is true only when everything passes
 - **Custom DRC rules** — `add_drc_rule` writes `.kicad_dru` with constraint types (clearance, track_width, length, skew, diff_pair_gap, …) and conditions in KiCAD's expression language
 - **Net classes + fab presets** — `apply_fab_preset` for JLCPCB / PCBWay / OSH Park; `add_net_class` for Power / USB / HDMI / Ethernet
 
@@ -184,7 +186,7 @@ add_ground_plane  layer="B.Cu"  net_name="GND"
 autoroute_pcb     passes=20
 
 # 3. Validate + export
-run_erc                                                    # 0 errors
+verify_schematic                                           # ok: true
 run_drc           refill_zones=True  schematic_parity=True  # 0 errors
 export_fab_package  include_render=True
 enrich_bom_with_sourcing  sources="digikey,mouser"
@@ -207,7 +209,7 @@ kicad-claude-mcp/
 │   │   ├── pcb.py                     # PCB editing, multi-board, layers
 │   │   ├── routing.py                 # autoroute_pcb (Freerouting wrapper)
 │   │   ├── manufacturing.py           # gerbers, drill, BOM, render, fab_package, STEP
-│   │   ├── validation.py              # run_erc, run_drc with JSON parsing
+│   │   ├── validation.py              # run_erc, run_drc, verify_schematic
 │   │   ├── rules.py                   # design rules, net classes, fab presets, DRU
 │   │   ├── sourcing.py                # DigiKey, Mouser, vendor ZIPs, BOM enrichment
 │   │   ├── sync.py                    # annotate, update_pcb_from_schematic

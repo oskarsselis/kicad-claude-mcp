@@ -1,8 +1,10 @@
 """Phase 7 — validation tools (ERC / DRC).
 
 Tools:
-    run_erc   — Electrical Rules Check on the active schematic
-    run_drc   — Design Rules Check on the active PCB
+    run_erc           — Electrical Rules Check on the active schematic
+    run_drc           — Design Rules Check on the active PCB
+    verify_schematic  — every schematic check in one call (ERC, nets, grid,
+                        frame, crowding) plus a PDF to look at
 
 Both shell out to `kicad-cli` and return structured JSON (errors,
 warnings, violations with positions). Raw report JSON is also written next
@@ -14,13 +16,30 @@ from __future__ import annotations
 import logging
 
 from kicad_claude import state
-from kicad_claude.adapters import kicad_cli
+from kicad_claude.adapters import kicad_cli, sch_verify
 
 logger = logging.getLogger("kicad-claude.tools.validation")
 
 
 def register(mcp) -> None:
     """Register Phase 7 tools on the FastMCP instance."""
+
+    @mcp.tool()
+    def verify_schematic(timeout_seconds: float = 120.0) -> dict:
+        """Check the active project's schematic (root and all sub-sheets) before
+        reporting it as done. Run this after every schematic change.
+
+        Checks: KiCAD ERC (all severities), off-grid connection points (100 mil),
+        items outside the drawing frame or on the title block, and symbols
+        crowding each other (overlapping bounding boxes, text included).
+        Also returns the netlist (net -> REF.pin) to compare with the intended
+        circuit, nets with a single connection, and a PDF of the schematic.
+
+        `ok` is true only when every check passes; `problems` lists what failed.
+        Outputs are written to `<project>/verify/`.
+        """
+        proj = state.get_active()
+        return sch_verify.verify(proj.path, proj.name, timeout=timeout_seconds)
 
     @mcp.tool()
     def run_erc(severity: str = "all", timeout_seconds: float = 60.0) -> dict:
