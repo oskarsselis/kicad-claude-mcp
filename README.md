@@ -45,10 +45,10 @@ files. You verify the result by opening KiCAD.
 ### Install
 
 ```bash
-git clone https://github.com/Greg3001/kicad-claude-mcp.git
+git clone https://github.com/oskarsselis/kicad-claude-mcp.git
 cd kicad-claude-mcp
 uv sync
-cp .env.example .env       # fill API keys when ready (optional, only Phase 4+)
+cp .env.example .env       # optional: API keys for sourcing tools
 ```
 
 Download Freerouting 2.1.0 to `third_party/freerouting.jar` (only needed for `autoroute_pcb`):
@@ -61,31 +61,37 @@ curl -L https://github.com/freerouting/freerouting/releases/download/v2.1.0/free
 
 ### Wire into Claude Code
 
-Add to `~/.claude/settings.json`:
+Register the server once per machine. `--scope user` makes it available in
+every folder; use absolute paths to the repo's own virtualenv Python (the
+system Python doesn't have the dependencies).
 
-```json
-{
-  "mcpServers": {
-    "kicad": {
-      "command": "/ABSOLUTE/PATH/TO/kicad-claude-mcp/.venv/bin/python",
-      "args": ["server.py"],
-      "cwd": "/ABSOLUTE/PATH/TO/kicad-claude-mcp"
-    }
-  }
-}
+Windows:
+
+```powershell
+claude mcp add kicad --scope user -- C:\path\to\kicad-claude-mcp\.venv\Scripts\python.exe C:\path\to\kicad-claude-mcp\server.py
 ```
 
-> The `command` MUST be the absolute path to `.venv/bin/python` — the system
-> Python doesn't have the dependencies. Reload Claude Code, run `/mcp` to
-> confirm `kicad` is connected, then ask for `Use the kicad ping tool`.
+macOS / Linux:
+
+```bash
+claude mcp add kicad --scope user -- /path/to/kicad-claude-mcp/.venv/bin/python /path/to/kicad-claude-mcp/server.py
+```
+
+Start Claude Code, run `/mcp` to confirm `kicad` is connected, then ask
+`Use the kicad ping tool`. After pulling changes to this repo, reconnect the
+server from `/mcp` to load them.
 
 ### First run
 
 ```
-> Index KiCAD's libraries  (one-time, ~60 s)
-> Create a project at /tmp/test for a voltage divider
-> ... etc
+> Index KiCad's libraries     (once per machine, ~60 s)
+> Create a project in C:/KiCad/divider with a 5 V to 0.45 V voltage divider
 ```
+
+KiCad is found automatically in its default install location (`C:\Program
+Files\KiCad\<version>` on Windows). The drawing conventions (100 mil grid,
+layout rules, `verify_schematic` before finishing) are sent by the server
+itself, so nothing else needs configuring on a new machine.
 
 ---
 
