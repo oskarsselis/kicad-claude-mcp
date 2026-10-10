@@ -118,7 +118,9 @@ def _divider(call, flag_x: float):
     call("add_wire", x1_mm=58.42, y1_mm=119.38, x2_mm=76.2, y2_mm=119.38)
     call("add_wire", x1_mm=76.2, y1_mm=121.92, x2_mm=76.2, y2_mm=119.38)
     call("add_power_symbol", net="GND", x_mm=58.42, y_mm=119.38)
-    call("add_label", net_name="VOUT", x_mm=76.2, y_mm=129.54)
+    # VOUT on its own stub, text lying back along the wire
+    call("add_wire", x1_mm=76.2, y1_mm=129.54, x2_mm=86.36, y2_mm=129.54)
+    call("add_label", net_name="VOUT", x_mm=86.36, y_mm=129.54, orientation="left")
 
 
 @pytest.mark.slow
