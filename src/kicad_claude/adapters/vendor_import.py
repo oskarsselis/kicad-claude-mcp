@@ -123,7 +123,11 @@ def _merge_symbol_lib(target_path: Path, sources: list[Path]) -> int:
     else:
         target = [
             sym("kicad_symbol_lib"),
-            [sym("version"), 20251024],
+            # KiCad 9 library format: it keeps `(hide yes)` inside `effects`,
+            # as written here. KiCad 10's 20251024 format expects it on the
+            # property itself, so hidden fields would load as visible and ERC
+            # would report lib_symbol_mismatch against the schematic copy.
+            [sym("version"), 20241209],
             [sym("generator"), "kicad-claude"],
             [sym("generator_version"), "0.1"],
         ]
