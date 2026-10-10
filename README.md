@@ -105,6 +105,7 @@ itself, so nothing else needs configuring on a new machine.
 - **Annotation**: `annotate_schematic` — auto-numbers `R?` → `R1, R2, ...` across all sheets
 - **Custom symbols**: `create_symbol` with full pin specifications
 - **Drawing conventions enforced**: connection points on the 100 mil grid, everything inside the drawing frame, reference/value laid out clear of the symbol, power references hidden, junctions added automatically. The server also sends its conventions to the AI client as MCP server instructions, so they apply on any machine.
+- **Symbol options**: `add_symbol` takes a footprint, extra fields (e.g. MPN), `display_field` (show the MPN instead of the value), `show_fields` (extra visible lines such as a capacitor's voltage), `text_side` and `mirror`; symbols from the project's own `lib/` (from `create_symbol`) can be placed; derived library symbols (`extends`) are flattened. `add_power_symbol` takes `rotation`, `symbol` (a net on a similar library symbol, e.g. `+5V_PD` on `+5V`), `hide_value` and `compact`.
 
 ### Library management
 
@@ -130,7 +131,7 @@ itself, so nothing else needs configuring on a new machine.
 ### Validation
 
 - **ERC and DRC** — `run_erc`, `run_drc` shell out to `kicad-cli` and parse the JSON
-- **Schematic verification** — `verify_schematic` runs ERC, lists the nets, flags off-grid, off-frame and title-block items and crowded symbols, and exports a PDF to look at; `ok` is true only when everything passes
+- **Schematic verification** — `verify_schematic` runs ERC, lists the nets, flags off-grid, off-frame and title-block items, crowded symbols, overlapping text, text crossing the frame or lying on a wire, wires through symbol bodies and labels hanging off their wire, and exports a PDF to look at; `ok` is true only when everything passes
 - **Custom DRC rules** — `add_drc_rule` writes `.kicad_dru` with constraint types (clearance, track_width, length, skew, diff_pair_gap, …) and conditions in KiCAD's expression language
 - **Net classes + fab presets** — `apply_fab_preset` for JLCPCB / PCBWay / OSH Park; `add_net_class` for Power / USB / HDMI / Ethernet
 

@@ -69,38 +69,70 @@ INSTRUCTIONS = """\
 KiCad MCP: conventions for drawing schematics.
 
 Coordinates: millimetres, origin at the bottom-left of the page, Y pointing up.
-On A4 the drawing frame spans x 10..287, y 8.28..198.28. The title block fills
-the bottom-right corner (about x > 177, y < 42 on A4): keep it clear. Put the
-circuit in the upper/middle part of the page.
+On A4 the drawing frame spans x 10..287, y 8.28..198.28 (A3: x 10..410,
+y 7.64..284.64). The title block fills the bottom-right corner (about 110 x 34
+mm): keep it clear. Put the circuit in the upper/middle part of the page.
 
 Projects: one folder per project, e.g. create_project(path="<parent>/<name>",
 name="<name>").
 
-Placement (the tools refuse off-grid and off-frame input and suggest a valid
-position; plan for it instead of trial and error):
+Grid and placement (the tools refuse off-grid and off-frame input and suggest
+a valid position; plan for it instead of trial and error):
 - Every connection point (pin end, wire end, label, junction) is on the
   100 mil (2.54 mm) grid. Check pin offsets with get_symbol_details or
   list_pins. Symbols whose pins sit 150 mil from their origin (Device:R,
-  Device:C, ...) need the origin half a step (1.27 mm) off grid along the
-  pin axis, e.g. a vertical resistor at y = 130.81.
+  Device:C, LED, ...) need the origin half a step (1.27 mm) off grid along
+  the pin axis; R_Small/C_Small pins are 100 mil from the origin.
 - Wire exactly to the positions list_pins reports. Junctions are added
-  automatically where three or more connections meet.
-- Reference and value are placed automatically beside each symbol, on the
-  side without pins. Leave room for that text (about 8-10 mm) and keep
-  symbols at least two grid steps apart. PWR_FLAG's label is wide: keep it
-  away from connectors and other symbols.
-- Power-symbol references are hidden automatically.
+  automatically where three or more connections meet, also when a symbol's
+  pin lands on an existing wire.
+
+Symbols:
+- Resistors: Device:R_Small. Capacitors: Device:C_Small.
+- Capacitors: Value holds only the capacitance ("10 µF"); put the voltage
+  rating in a "Voltage" field shown on the line below the value
+  (show_fields=["Voltage"]) and the dielectric in a hidden "Dielectric" field.
+- ICs show their MPN instead of the value (fields={"MPN": ...},
+  display_field="MPN").
+- Power symbols for supply rails (GND, +3V3, VBUS, ...): GND symbols face
+  down with the "GND" text hidden (hide_value=True); supply symbols face up.
+  A rail without its own library symbol uses a similar one with the net as
+  value (add_power_symbol(net="+5V_PD", symbol="+5V")).
+- Use mirror="y" where rotation alone can't give the needed pin order (e.g. a
+  back-to-back MOSFET pair with both gates down).
+- Pins of type no_connect that the library hides need no no-connect flag;
+  flag only visible unused pins.
 - Add a PWR_FLAG to every supply and ground net that no power-output pin
   drives (e.g. power arriving through a connector), or ERC reports
   power_pin_not_driven.
-- Input connectors: Connector:Conn_01xNN_Pin has its pins on the right
-  (pin 1 at the top), so it suits inputs on the left side of the sheet.
+
+Wiring and labels:
+- Connect each supporting part (resistors, capacitors, LEDs, diodes,
+  transistors) to the IC pin it serves with a wire; put the net label on that
+  wire. Connections between functional blocks may use labels alone.
+- A label's text must lie along its own wire: make the wire at least as long
+  as the text and, at a stub's free end, point the label back towards the
+  pin. Text sticking out past a wire end looks like it hangs off the tip.
+- Wires may cross where that keeps the layout simple; a crossing must never
+  join two nets (only wire ends create connections).
+- Keep it compact: short wires, few bends, parts close to the pins they serve.
+
+Text and spacing:
+- Reference and value are placed automatically beside each symbol, on the
+  side without pins; text_side overrides it (e.g. for long values).
+- KiCad treats a symbol as one rectangle around its body, pins and visible
+  text, so the empty area under a long value still belongs to it: keep other
+  symbols out of that rectangle, or they are plotted as overlapping.
+- Capacitors and resistors hanging off a horizontal wire need a short stub
+  (one grid step) so their text clears the wire.
 
 Finishing: after changing a schematic, call verify_schematic. Only report the
-schematic as done when `ok` is true; otherwise fix every item in `problems`.
-Compare `nets` with the intended circuit, and open the PDF it returns and
-look at it: the checks cannot judge readability or whether the circuit does
-what was asked. Report ERC results exactly as returned.
+schematic as done when `ok` is true; otherwise fix every item in `problems`
+(overlapping text, text on wires, wires through symbols, labels off their
+wire, crowding, grid and frame). Compare `nets` with the intended circuit,
+and open the PDF it returns and look at it: the checks cannot judge
+readability or whether the circuit does what was asked. Report ERC results
+exactly as returned.
 """
 
 mcp = FastMCP("kicad-claude", instructions=INSTRUCTIONS)
