@@ -105,6 +105,27 @@ FAB_PRESETS: dict[str, dict] = {
             "min_silk_clearance": 0.15,
         },
     },
+    # From https://www.pcbway.com/capabilities.html (checked 2026-10-10):
+    # trace >= 4 mil; spacing >= 5 mil for 35 um (1 oz) copper; CNC drill
+    # 0.15-6.0 mm; annular ring >= 0.15 mm; hole to copper (4 layers) >= 7 mil;
+    # via hole to hole (<= 0.45 mm) >= 11 mil; trace to edge (CNC) 0.25 mm;
+    # legend character width >= 0.15 mm, height >= 0.8 mm. The solder-mask
+    # bridge (>= 4 mil for < 2 oz) is a board setting, not a project rule.
+    "pcbway_4l": {
+        "description": "PCBWay capability limits for 4 layers, 1 oz copper (from pcbway.com/capabilities)",
+        "rules": {
+            "min_clearance": 0.127,
+            "min_track_width": 0.1,
+            "min_via_annular_width": 0.15,
+            "min_via_diameter": 0.45,
+            "min_through_hole_diameter": 0.15,
+            "min_hole_clearance": 0.18,
+            "min_hole_to_hole": 0.28,
+            "min_copper_edge_clearance": 0.25,
+            "min_text_height": 0.8,
+            "min_text_thickness": 0.15,
+        },
+    },
     "oshpark_4l": {
         "description": "OSH Park 4-layer process (≥0.127 mm trace, ≥0.2 mm drill)",
         "rules": {
@@ -153,6 +174,16 @@ DEFAULT_NETCLASS = {
     "via_drill": 0.3,
     "wire_width": 6,
 }
+
+
+def get_schematic_text_size_mils(pro: dict) -> float | None:
+    """The schematic's default text size in mils, if the project sets one."""
+    v = pro.get("schematic", {}).get("drawing", {}).get("default_text_size")
+    return float(v) if v else None
+
+
+def set_schematic_text_size_mils(pro: dict, mils: float) -> None:
+    pro.setdefault("schematic", {}).setdefault("drawing", {})["default_text_size"] = float(mils)
 
 
 def get_net_classes(pro: dict) -> list:

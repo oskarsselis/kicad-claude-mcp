@@ -199,6 +199,23 @@ for net in root.findall("nets/net"):
         if ref and pin:
             ref_to_pad_nets.setdefault(ref, {})[pin] = net_name
 
+# Per component: value, extra fields, BOM/DNP flags and the symbol's path,
+# so footprints carry what the schematic says (as KiCAD's Update PCB does).
+STANDARD = {"Reference", "Value", "Footprint"}
+comps = {}
+for c in root.findall("components/comp"):
+    props = {p.get("name"): p.get("value") for p in c.findall("property")}
+    sheet = c.find("sheetpath")
+    tstamp = (c.findtext("tstamps") or "").strip()
+    comps[c.get("ref")] = {
+        "value": c.findtext("value") or "",
+        "fields": {f.get("name"): (f.text or "") for f in c.findall("fields/field")
+                   if f.get("name") not in STANDARD},
+        "exclude_from_bom": "exclude_from_bom" in props,
+        "dnp": "dnp" in props,
+        "path": ((sheet.get("tstamps") if sheet is not None else "/") or "/") + tstamp,
+    }
+
 # Load the board
 board = pcbnew.LoadBoard(pcb_path)
 
@@ -220,8 +237,22 @@ missing_in_pcb = sorted(schematic_refs - pcb_refs)
 
 pad_changes = 0
 matched = 0
+fields_set = 0
 for fp in fps:
     ref = fp.GetReference()
+    info = comps.get(ref)
+    if info is not None:
+        fp.SetValue(info["value"])
+        for name, text in info["fields"].items():
+            new = not fp.HasField(name)
+            fp.SetField(name, text)
+            if new:
+                fp.GetField(name).SetVisible(False)
+            fields_set += 1
+        fp.SetExcludedFromBOM(info["exclude_from_bom"])
+        fp.SetDNP(info["dnp"])
+        if info["path"].strip("/"):
+            fp.SetPath(pcbnew.KIID_PATH(info["path"]))
     if ref not in ref_to_pad_nets:
         continue
     matched += 1
@@ -241,6 +272,7 @@ result = {
     "matched_footprints": matched,
     "missing_in_pcb": missing_in_pcb,
     "pad_assignments_made": pad_changes,
+    "fields_set": fields_set,
     "schematic_references": len(schematic_refs),
     "pcb_references": len(pcb_refs),
     "schematic_nets": len(all_nets),
@@ -250,7 +282,9 @@ print("RESULT_JSON:" + json.dumps(result))
 
 
 def apply_netlist(pcb_path: Path, netlist_xml_path: Path, timeout: float = 90.0) -> dict:
-    """Apply a kicadxml netlist to the PCB: assign nets to pads, add missing nets.
+    """Apply a kicadxml netlist to the PCB: assign nets to pads, add missing
+    nets, and copy each symbol's value, extra fields (e.g. MPN), BOM/DNP flags
+    and symbol path onto its footprint.
 
     The netlist must be in `kicadxml` format (use `export_netlist(format="kicadxml")`
     to produce it). Footprints in the schematic that aren't on the PCB are

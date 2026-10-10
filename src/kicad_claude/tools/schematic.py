@@ -18,6 +18,7 @@ from pathlib import Path
 
 from kicad_claude import state
 from kicad_claude.adapters import sch_editor as ed
+from kicad_claude.adapters import project_settings as ps
 from kicad_claude.adapters import sch_io
 from kicad_claude.templates.blank import write_blank_schematic
 from kicad_claude.tools import library as lib_tools
@@ -41,6 +42,17 @@ def _save_with_backup(tree: list, sch_path: Path) -> Path | None:
     backup = ed.backup_file(sch_path)
     sch_io.write_file(sch_path, tree)
     return backup
+
+
+def _field_text_mm() -> float:
+    """Font height for Reference/Value text: the project's default text size
+    (Schematic Setup > Formatting, stored in mils), KiCAD's 50 mil if unset."""
+    pro_path = state.get_active().pro_path
+    if pro_path.is_file():
+        mils = ps.get_schematic_text_size_mils(ps.load_pro(pro_path))
+        if mils:
+            return round(mils * 0.0254, 4)
+    return ed.FIELD_TEXT_MM
 
 
 def _root_uuid(proj_sch_path: Path) -> str:
@@ -210,6 +222,7 @@ def register(mcp) -> None:
             display_field=display_field,
             mirror=mirror,
             show_fields=show_fields,
+            text_size=_field_text_mm(),
         )
         backup = _save_with_backup(tree, path)
         logger.info(
@@ -226,6 +239,23 @@ def register(mcp) -> None:
             "sheet": state.get_active_sheet_filename() or "root",
             "backup": str(backup) if backup else None,
         }
+
+    @mcp.tool()
+    def set_schematic_text_size(size_mils: float) -> dict:
+        """Set the project's default schematic text size (KiCAD's Schematic
+        Setup > Formatting > Default text size), in mils (KiCAD default 50).
+
+        Symbols placed or moved afterwards get their Reference, Value and
+        shown fields at this size, laid out for it. Existing symbols keep
+        their text until moved.
+        """
+        if not 10 <= size_mils <= 500:
+            raise ValueError("size_mils must be between 10 and 500")
+        pro_path = state.get_active().pro_path
+        pro = ps.load_pro(pro_path)
+        ps.set_schematic_text_size_mils(pro, size_mils)
+        ps.save_pro(pro_path, pro)
+        return {"default_text_size_mils": size_mils, "project": str(pro_path)}
 
     @mcp.tool()
     def remove_symbol(reference: str) -> dict:
@@ -248,7 +278,7 @@ def register(mcp) -> None:
         Same rules as add_symbol: pin ends on the 100 mil grid, inside the frame.
         """
         tree, path = _load_active_schematic()
-        ed.move_symbol(tree, reference, x_mm, y_mm, rotation)
+        ed.move_symbol(tree, reference, x_mm, y_mm, rotation, text_size=_field_text_mm())
         backup = _save_with_backup(tree, path)
         return {
             "reference": reference,
@@ -355,6 +385,7 @@ def register(mcp) -> None:
             description=meta.get("description", ""),
             compact_power_text=compact,
             hide_value=hide_value,
+            text_size=_field_text_mm(),
         )
         backup = _save_with_backup(tree, path)
         return {

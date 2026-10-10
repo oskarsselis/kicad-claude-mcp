@@ -285,6 +285,30 @@ def _strip_top_fields(fp: list, names: set[str]) -> list:
     return [c for c in fp[2:] if head_of(c) not in names]
 
 
+def _rotate_child_angles(children: list, delta: float) -> None:
+    """Add `delta` degrees to the orientation of a footprint's pads and texts.
+
+    In a .kicad_pcb file pad and text angles are absolute (they include the
+    footprint's rotation), while their positions stay relative to the
+    footprint. Without this, a rotated footprint keeps its pads in library
+    orientation: tall pads end up lying across their neighbours.
+    """
+    if not delta:
+        return
+    for c in children:
+        if not (is_call(c, "pad") or is_call(c, "property") or is_call(c, "fp_text")):
+            continue
+        at = find_child(c, "at")
+        if at is None or len(at) < 3:
+            continue
+        angle = (float(at[3]) if len(at) >= 4 else 0.0) + delta
+        angle = round(angle % 360, 4)
+        if len(at) >= 4:
+            at[3] = angle
+        else:
+            at.append(angle)
+
+
 def _build_placed_footprint(
     fp_def: list,
     qualified_lib_id: str,
@@ -313,6 +337,7 @@ def _build_placed_footprint(
             elif c[1] == "Value":
                 c[2] = value
 
+    _rotate_child_angles(core, rotation_deg)
     header: list[Any] = [
         [sym("layer"), layer],
         [sym("uuid"), str(uuid.uuid4())],
@@ -391,15 +416,114 @@ def move_footprint(
         at[2] = round_mm(yk)
         if rotation is not None:
             rot = normalize_rotation(rotation)
+            old = float(at[3]) if len(at) >= 4 else 0.0
             if len(at) >= 4:
                 at[3] = rot
             else:
                 at.append(rot)
+            _rotate_child_angles(fp[1:], rot - old)
 
     if layer is not None:
         layer_node = find_child(fp, "layer")
         if layer_node:
             layer_node[1] = layer
+
+
+def set_footprint_text_visibility(
+    tree: list,
+    *,
+    show_reference: bool | None = None,
+    show_value: bool | None = None,
+    references: list[str] | None = None,
+) -> int:
+    """Show or hide footprints' Reference and/or Value text.
+
+    `None` leaves that field as it is; `references` limits the change to those
+    footprints (default: all). Returns the number of fields changed.
+    """
+    wanted = set(references) if references else None
+    changed = 0
+    for fp in iter_footprints(tree):
+        if wanted is not None and get_footprint_reference(fp) not in wanted:
+            continue
+        for prop in find_children(fp, "property"):
+            if len(prop) < 3:
+                continue
+            show = {"Reference": show_reference, "Value": show_value}.get(prop[1])
+            if show is None:
+                continue
+            had = [c for c in prop[3:] if is_call(c, "hide")]
+            for c in had:
+                prop.remove(c)
+            if not show:
+                # pcbnew writes (hide yes) right after the property's layer
+                layer = find_child(prop, "layer")
+                idx = prop.index(layer) + 1 if layer is not None else len(prop)
+                prop.insert(idx, [sym("hide"), sym("yes")])
+            changed += 1
+    return changed
+
+
+LAYER_TYPES = ("signal", "power", "mixed", "jumper")
+
+# Non-copper layers a board may switch off (KiCAD 10 ids, as in the
+# `(layers ...)` block). Copper and Edge.Cuts are always present.
+OPTIONAL_LAYERS: dict[str, tuple[int, str | None]] = {
+    "F.Adhes": (9, "F.Adhesive"), "B.Adhes": (11, "B.Adhesive"),
+    "F.Paste": (13, None), "B.Paste": (15, None),
+    "F.SilkS": (5, "F.Silkscreen"), "B.SilkS": (7, "B.Silkscreen"),
+    "F.Mask": (1, None), "B.Mask": (3, None),
+    "Dwgs.User": (17, "User.Drawings"), "Cmts.User": (19, "User.Comments"),
+    "Eco1.User": (21, "User.Eco1"), "Eco2.User": (23, "User.Eco2"),
+    "Margin": (27, None),
+    "F.CrtYd": (31, "F.Courtyard"), "B.CrtYd": (29, "B.Courtyard"),
+    "F.Fab": (35, None), "B.Fab": (33, None),
+}
+
+
+def set_layers_enabled(tree: list, layers: list[str], enabled: bool) -> dict:
+    """Switch non-copper layers on or off, as KiCAD's Board Setup > Layers does.
+
+    Disabling removes the layer's row from `(layers ...)`; footprint graphics
+    on it stay in the file (KiCAD saves it the same way) but are not shown,
+    plotted or checked. Enabling adds the row back.
+    """
+    unknown = [n for n in layers if n not in OPTIONAL_LAYERS]
+    if unknown:
+        raise ValueError(f"can't switch {unknown}: only {sorted(OPTIONAL_LAYERS)}")
+    block = find_child(tree, "layers")
+    if block is None:
+        raise ValueError("PCB has no (layers ...) block")
+    rows = {row[1]: row for row in block[1:] if isinstance(row, list) and len(row) >= 3}
+    changed = []
+    for name in layers:
+        if enabled and name not in rows:
+            num, user_name = OPTIONAL_LAYERS[name]
+            block.append([num, name, sym("user"), *([user_name] if user_name else [])])
+            changed.append(name)
+        elif not enabled and name in rows:
+            block.remove(rows[name])
+            changed.append(name)
+    enabled_now = [row[1] for row in block[1:] if isinstance(row, list) and len(row) >= 3]
+    return {"changed": changed, "enabled_layers": enabled_now}
+
+
+def set_copper_layer(tree: list, layer: str, kind: str, user_name: str | None = None) -> dict:
+    """Set a copper layer's type (signal / power plane / mixed / jumper) and,
+    optionally, its user name, in the `(layers ...)` block."""
+    if kind not in LAYER_TYPES:
+        raise ValueError(f"kind must be one of {LAYER_TYPES} (got {kind!r})")
+    layers = find_child(tree, "layers")
+    if layers is None:
+        raise ValueError("PCB has no (layers ...) block")
+    for row in layers[1:]:
+        if isinstance(row, list) and len(row) >= 3 and row[1] == layer:
+            row[2] = sym(kind)
+            del row[3:]
+            if user_name:
+                row.append(user_name)
+            return {"layer": layer, "type": kind, "name": user_name or layer}
+    raise KeyError(f"no layer {layer!r} on this board (check the layer count)")
 
 
 def place_footprints_grid(

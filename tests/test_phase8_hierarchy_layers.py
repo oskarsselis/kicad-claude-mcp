@@ -112,6 +112,22 @@ def test_set_copper_layer_count_rejects_invalid(blank_project):
         pcb_ed.set_copper_layer_count(tree, 0)
 
 
+def test_set_layers_enabled_removes_and_restores_fab(blank_project):
+    tree = sch_io.parse_file(blank_project["pcb"])
+
+    def names():
+        return [r[1] for r in sch_io.find_child(tree, "layers")[1:] if isinstance(r, list)]
+
+    assert "F.Fab" in names()
+    res = pcb_ed.set_layers_enabled(tree, ["F.Fab", "B.Fab"], False)
+    assert res["changed"] == ["F.Fab", "B.Fab"]
+    assert "F.Fab" not in names() and "B.Fab" not in names()
+    pcb_ed.set_layers_enabled(tree, ["F.Fab"], True)
+    assert "F.Fab" in names()
+    with pytest.raises(ValueError):
+        pcb_ed.set_layers_enabled(tree, ["F.Cu"], False)
+
+
 # ===== set_layer_count tool ================================================ #
 
 

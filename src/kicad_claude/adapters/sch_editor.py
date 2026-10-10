@@ -458,7 +458,7 @@ _MIRROR_JUSTIFY_FLIP: dict[tuple[int, str], bool] = {(r, "y"): True for r in (0,
 
 def field_layout(
     symbol_def_node: list, sx: float, sy: float, rot: int, side: str | None = None,
-    mirror: str | None = None, n_lines: int = 2,
+    mirror: str | None = None, n_lines: int = 2, text_size: float = FIELD_TEXT_MM,
 ) -> tuple[float, list[float], str, int]:
     """Where to put `n_lines` stacked field lines (Reference first) beside a
     symbol, clear of its outline.
@@ -468,14 +468,14 @@ def field_layout(
     orientation in KiCAD, so they are chosen here such that the text reads
     horizontally and grows away from the symbol at any rotation or mirror.
     `side` forces where the text goes (one of TEXT_SIDES); by default it is
-    the first side without pins.
+    the first side without pins. `text_size` is the font height in mm.
     """
     auto_side, (x0, y0, x1, y1) = _field_sides(symbol_def_node, sx, sy, rot, mirror)
     if side is None:
         side = auto_side
     elif side not in TEXT_SIDES:
         raise ValueError(f"text_side must be one of {TEXT_SIDES} (got {side!r})")
-    half = FIELD_TEXT_MM / 2
+    half = text_size / 2
     span = (n_lines - 1) * FIELD_LINE_MM
     if side in ("right", "left"):
         x, grow = (x1 + FIELD_GAP_MM, "left") if side == "right" else (x0 - FIELD_GAP_MM, "right")
@@ -503,10 +503,10 @@ def field_layout(
 
 def place_ref_value(
     symbol_def_node: list, sx: float, sy: float, rot: int, side: str | None = None,
-    mirror: str | None = None,
+    mirror: str | None = None, text_size: float = FIELD_TEXT_MM,
 ) -> tuple[tuple[float, float, str], tuple[float, float, str], int]:
     """Reference and Value anchors: ((x, y, justify), (x, y, justify), angle)."""
-    x, ys, justify, angle = field_layout(symbol_def_node, sx, sy, rot, side, mirror, 2)
+    x, ys, justify, angle = field_layout(symbol_def_node, sx, sy, rot, side, mirror, 2, text_size)
     return (x, ys[0], justify), (x, ys[1], justify), angle
 
 
@@ -519,7 +519,7 @@ def _lib_property(symbol_def_node: list, name: str) -> list | None:
 
 def _power_value_prop(
     symbol_def_node: list, value: str, x_k: float, y_k: float, rot: int,
-    compact: bool = False,
+    compact: bool = False, text_size: float = FIELD_TEXT_MM,
 ) -> list:
     """Value field of a power symbol, positioned and styled as in its library.
 
@@ -539,6 +539,7 @@ def _power_value_prop(
     if effects is None:
         effects = [sym("effects"), [sym("font"), [sym("size"), 1.27, 1.27]]]
     effects[1:] = [c for c in effects[1:] if not is_call(c, "hide")]
+    _set_font_size(effects, text_size)
     if rot in (90, 270) and abs(rx) > 1e-6:
         grow = "left" if rx > 0 else "right"  # text extends towards +x / -x
         # Rotation 90 mirrors the stored justification on screen (see place_ref_value).
@@ -557,6 +558,23 @@ def _power_value_prop(
         [sym("at"), round_mm(x_k + rx), round_mm(y_k - ry), langle],
         effects,
     ]
+
+
+def _set_font_size(effects: list, size: float) -> None:
+    """Set the font height and width inside an (effects ...) node."""
+    font = find_child(effects, "font")
+    if font is None:
+        font = [sym("font")]
+        effects.insert(1, font)
+    font[1:] = [c for c in font[1:] if not is_call(c, "size")]
+    font.insert(1, [sym("size"), size, size])
+
+
+def _lib_flag(sym_def_node: list | None, name: str, default: str) -> str:
+    """A yes/no flag (in_bom, on_board, exclude_from_sim) as the library symbol
+    sets it, e.g. test points and power symbols are kept out of the BOM."""
+    node = find_child(sym_def_node, name) if sym_def_node is not None else None
+    return str(node[1]) if node is not None and len(node) >= 2 else default
 
 
 def build_symbol_instance(
@@ -581,6 +599,7 @@ def build_symbol_instance(
     hide_value: bool = False,
     mirror: str | None = None,
     show_fields: list[str] | None = None,
+    text_size: float = FIELD_TEXT_MM,
 ) -> list:
     """Construct a new (symbol ...) instance node ready to inject into the schematic.
 
@@ -589,6 +608,8 @@ def build_symbol_instance(
     and hide their `#PWR` reference. Footprint/Datasheet/Description are
     hidden metadata anchored at the symbol origin. `show_fields` names extra
     `fields` shown on their own lines below the Value; other fields are hidden.
+    `text_size` (mm) is the font height of the visible Reference, Value and
+    shown fields.
     """
     if mirror not in MIRRORS:
         raise ValueError(f"mirror must be one of {MIRRORS} (got {mirror!r})")
@@ -610,7 +631,8 @@ def build_symbol_instance(
         justify: list | None = None,
     ) -> list:
         node: list[Any] = [sym("property"), name, val, [sym("at"), *at]]
-        effects: list[Any] = [sym("effects"), [sym("font"), [sym("size"), 1.27, 1.27]]]
+        size = 1.27 if hide else text_size
+        effects: list[Any] = [sym("effects"), [sym("font"), [sym("size"), size, size]]]
         if justify:
             effects.append([sym("justify"), *justify])
         if hide:
@@ -625,14 +647,14 @@ def build_symbol_instance(
     elif is_power:
         ref_prop = _prop("Reference", reference, hide=True)
         val_prop = _power_value_prop(
-            sym_def_node, value, x_k, y_k, rotation_deg, compact_power_text
+            sym_def_node, value, x_k, y_k, rotation_deg, compact_power_text, text_size
         )
         if hide_value:
             find_child(val_prop, "effects").append([sym("hide"), sym("yes")])
     visible: dict[str, list] = {}
     if sym_def_node is not None and not is_power:
         fx, ys, just, angle = field_layout(
-            sym_def_node, x_k, y_k, rotation_deg, text_side, mirror, 2 + len(show_fields)
+            sym_def_node, x_k, y_k, rotation_deg, text_side, mirror, 2 + len(show_fields), text_size
         )
 
         def line(i: int) -> dict:
@@ -671,9 +693,9 @@ def build_symbol_instance(
         [sym("at"), x_k, y_k, rotation_deg],
         *([[sym("mirror"), sym(mirror)]] if mirror else []),
         [sym("unit"), 1],
-        [sym("exclude_from_sim"), sym("no")],
-        [sym("in_bom"), sym("yes")],
-        [sym("on_board"), sym("yes")],
+        [sym("exclude_from_sim"), sym(_lib_flag(sym_def_node, "exclude_from_sim", "no"))],
+        [sym("in_bom"), sym(_lib_flag(sym_def_node, "in_bom", "yes"))],
+        [sym("on_board"), sym(_lib_flag(sym_def_node, "on_board", "yes"))],
         [sym("dnp"), sym("no")],
         [sym("uuid"), inst_uuid],
         ref_prop,
@@ -714,6 +736,7 @@ def add_symbol(
     hide_value: bool = False,
     mirror: str | None = None,
     show_fields: list[str] | None = None,
+    text_size: float = FIELD_TEXT_MM,
 ) -> list:
     """Inject a symbol into the schematic. Returns the new (symbol ...) node.
 
@@ -768,6 +791,7 @@ def add_symbol(
         hide_value=hide_value,
         mirror=mirror,
         show_fields=show_fields,
+        text_size=text_size,
     )
     tree.append(instance)
     # A pin placed on an existing wire (e.g. a power symbol on a rail) only
@@ -799,6 +823,7 @@ def move_symbol(
     x_mm: float,
     y_mm: float,
     rotation: float | None = None,
+    text_size: float = FIELD_TEXT_MM,
 ) -> None:
     """Set absolute position (and optionally rotation) of an existing symbol.
 
@@ -832,18 +857,22 @@ def move_symbol(
             p_at[1] = round_mm(float(p_at[1]) + dx)
             p_at[2] = round_mm(float(p_at[2]) + dy)
     if sym_def is not None:
-        _relayout_ref_value(s_node, sym_def, x_k, y_k, rot)
+        _relayout_ref_value(s_node, sym_def, x_k, y_k, rot, text_size)
 
 
-def _relayout_ref_value(s_node: list, sym_def: list, x_k: float, y_k: float, rot: int) -> None:
+def _relayout_ref_value(
+    s_node: list, sym_def: list, x_k: float, y_k: float, rot: int, text_size: float = FIELD_TEXT_MM,
+) -> None:
     """Re-place an instance's Reference/Value the way `build_symbol_instance` does."""
     props = {p[1]: p for p in find_children(s_node, "property") if len(p) >= 3}
     if find_child(sym_def, "power") is not None:
         if "Value" in props:
-            fresh = _power_value_prop(sym_def, props["Value"][2], x_k, y_k, rot)
+            fresh = _power_value_prop(sym_def, props["Value"][2], x_k, y_k, rot, text_size=text_size)
             props["Value"][3:] = fresh[3:]
         return
-    ref_at, val_at, angle = place_ref_value(sym_def, x_k, y_k, rot, mirror=instance_mirror(s_node))
+    ref_at, val_at, angle = place_ref_value(
+        sym_def, x_k, y_k, rot, mirror=instance_mirror(s_node), text_size=text_size
+    )
     for name, (fx, fy, justify) in (("Reference", ref_at), ("Value", val_at)):
         prop = props.get(name)
         if prop is None:

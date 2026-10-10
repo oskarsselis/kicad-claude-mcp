@@ -96,6 +96,35 @@ def register(mcp) -> None:
         return result
 
     @mcp.tool()
+    def set_copper_layer(layer: str, kind: str, name: str | None = None) -> dict:
+        """Set a copper layer's type and optional user name, e.g.
+        set_copper_layer("In1.Cu", "power", "GND") for a ground plane layer.
+
+        kind: signal | power (plane) | mixed | jumper. Pours are separate
+        (add_zone / add_ground_plane).
+        """
+        tree, path = _load_active_pcb()
+        result = ed.set_copper_layer(tree, layer, kind, name)
+        backup = _save_with_backup(tree, path)
+        result["backup"] = str(backup) if backup else None
+        return result
+
+    @mcp.tool()
+    def set_layers_enabled(layers: list[str], enabled: bool = False) -> dict:
+        """Switch non-copper layers off (or back on), e.g.
+        set_layers_enabled(["F.Fab", "B.Fab"]) as in KiCAD's Board Setup > Layers.
+
+        Footprint graphics on a disabled layer stay in the footprints but are
+        not shown or plotted. Call after set_layer_count, which rebuilds the
+        layer list.
+        """
+        tree, path = _load_active_pcb()
+        result = ed.set_layers_enabled(tree, layers, enabled)
+        backup = _save_with_backup(tree, path)
+        result["backup"] = str(backup) if backup else None
+        return result
+
+    @mcp.tool()
     def set_board_outline(
         width_mm: float,
         height_mm: float,
@@ -182,6 +211,24 @@ def register(mcp) -> None:
             "layer": layer,
             "backup": str(backup) if backup else None,
         }
+
+    @mcp.tool()
+    def set_footprint_text_visibility(
+        show_reference: bool | None = None,
+        show_value: bool | None = None,
+        references: list[str] | None = None,
+    ) -> dict:
+        """Show or hide footprints' Reference and/or Value text on the PCB.
+
+        Pass False to hide, True to show, or leave None to keep as is.
+        `references` limits the change to those footprints (default: all).
+        """
+        tree, path = _load_active_pcb()
+        n = ed.set_footprint_text_visibility(
+            tree, show_reference=show_reference, show_value=show_value, references=references
+        )
+        backup = _save_with_backup(tree, path)
+        return {"fields_changed": n, "backup": str(backup) if backup else None}
 
     @mcp.tool()
     def place_footprints_grid(

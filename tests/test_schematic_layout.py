@@ -281,3 +281,41 @@ def test_get_symbol_pins_follows_extends():
     from kicad_claude.indexer.kicad_libs import get_symbol_pins
 
     assert [p["number"] for p in get_symbol_pins(_MINILIB, "R_Small")] == ["1", "2"]
+
+
+def _size(prop):
+    font = ed.find_child(ed.find_child(prop, "effects"), "font")
+    return float(ed.find_child(font, "size")[1])
+
+
+def test_text_size_applies_to_visible_fields_only(tree):
+    s = ed.add_symbol(
+        tree, qualified_lib_id="L:R", reference="R1", value="10k", x_mm=101.6, y_mm=100.33,
+        rotation=0, sym_def_node=_def(_RESISTOR), project_name="t", text_size=1.016,
+    )
+    assert _size(_prop(s, "Reference")) == _size(_prop(s, "Value")) == 1.016
+    assert _size(_prop(s, "Footprint")) == 1.27
+    p = ed.add_symbol(
+        tree, qualified_lib_id="power:+5V", reference="#PWR0001", value="+5V", x_mm=101.6,
+        y_mm=152.4, rotation=0, sym_def_node=_def(_POWER), project_name="t", text_size=1.016,
+    )
+    assert _size(_prop(p, "Value")) == 1.016
+
+
+def test_tools_use_the_project_text_size(tmp_path):
+    from mcp.server.fastmcp import FastMCP
+
+    from kicad_claude.adapters import project_settings as ps
+    from kicad_claude.tools import schematic as sch_tools
+
+    state.clear_active()
+    files = write_blank_project(tmp_path / "p", "p")
+    state.set_active(tmp_path / "p", "p")
+    try:
+        mcp = FastMCP("t")
+        sch_tools.register(mcp)
+        mcp._tool_manager.get_tool("set_schematic_text_size").fn(size_mils=40)
+        assert ps.get_schematic_text_size_mils(ps.load_pro(files["pro"])) == 40
+        assert sch_tools._field_text_mm() == pytest.approx(1.016)
+    finally:
+        state.clear_active()
