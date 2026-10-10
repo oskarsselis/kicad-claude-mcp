@@ -73,8 +73,39 @@ def _instance_path() -> str:
     return f"/{root_uuid}/{ed.get_sheet_uuid(sheet_node)}"
 
 
+def _project_lib_symbol(lib_id: str) -> tuple[Path, str, dict] | None:
+    """Find `lib_id` in the active project's own libraries (`<project>/lib/`,
+    where create_symbol writes). These are not part of the global index."""
+    proj = state.get_active_or_none()
+    if proj is None or ":" not in lib_id:
+        return None
+    lib, name = lib_id.split(":", 1)
+    path = proj.path / "lib" / f"{lib}.kicad_sym"
+    if not path.is_file():
+        return None
+    try:
+        node = ed.fetch_symbol_def(path, name)
+    except KeyError:
+        return None
+    meta = {
+        "lib": lib,
+        "name": name,
+        "default_footprint": ed.get_symbol_property(node, "Footprint") or "",
+        "datasheet": ed.get_symbol_property(node, "Datasheet") or "~",
+        "description": ed.get_symbol_property(node, "Description") or "",
+        "pin_count": len(ed.collect_pin_numbers(node)),
+    }
+    return path, name, meta
+
+
 def _resolve_lib_symbol(lib_id: str) -> tuple[Path, str, dict]:
-    """Look up `lib_id` in the indexer and return (lib_file, symbol_name, meta)."""
+    """Look up `lib_id` in the project's own libraries, then the global index.
+
+    Returns (lib_file, symbol_name, meta).
+    """
+    local = _project_lib_symbol(lib_id)
+    if local is not None:
+        return local
     idx = lib_tools._ensure_index()
     meta = idx["symbols"].get(lib_id)
     if meta is None:
@@ -121,8 +152,15 @@ def register(mcp) -> None:
         x_mm: float,
         y_mm: float,
         rotation: float = 0,
+        footprint: str | None = None,
+        fields: dict[str, str] | None = None,
+        text_side: str | None = None,
+        display_field: str | None = None,
+        mirror: str | None = None,
+        show_fields: list[str] | None = None,
     ) -> dict:
-        """Add a symbol from the indexed KiCAD libraries to the active schematic.
+        """Add a symbol from the indexed KiCAD libraries (or the project's own
+        `lib/` libraries, e.g. from create_symbol) to the active schematic.
 
         Args:
             lib_id: e.g. "Device:R" or "RF_Module:ESP32-S3-WROOM-1"
@@ -134,6 +172,17 @@ def register(mcp) -> None:
                 (e.g. Device:R) sit half a step off grid. Off-grid or
                 off-sheet placements are refused, naming a valid position.
             rotation: 0/90/180/270 degrees CCW
+            footprint: "Lib:Footprint" to assign; defaults to the symbol's own
+            fields: extra hidden properties, e.g. {"MPN": "BSS138LT1G"}
+            text_side: where Reference/Value go: "right", "left", "top",
+                "bottom" or "corner" (above-left). Default: the first side
+                without pins. Use it to steer long values away from wiring.
+            display_field: show this field (e.g. "MPN", which must be in
+                `fields`) where the Value would be, and hide the Value.
+            mirror: "y" flips the symbol left/right, "x" up/down (applied
+                after rotation, as in KiCAD).
+            show_fields: names from `fields` to show on extra lines below the
+                Value (e.g. ["Voltage"]); other fields stay hidden.
 
         Returns the placed symbol's identity. Refuses if `reference` already exists.
         """
@@ -153,9 +202,14 @@ def register(mcp) -> None:
             sym_def_node=sym_def,
             project_name=proj.name,
             instance_path=_instance_path(),
-            footprint=meta.get("default_footprint", ""),
+            footprint=meta.get("default_footprint", "") if footprint is None else footprint,
             datasheet=meta.get("datasheet", "~"),
             description=meta.get("description", ""),
+            fields=fields,
+            text_side=text_side,
+            display_field=display_field,
+            mirror=mirror,
+            show_fields=show_fields,
         )
         backup = _save_with_backup(tree, path)
         logger.info(
@@ -241,26 +295,47 @@ def register(mcp) -> None:
         }
 
     @mcp.tool()
-    def add_power_symbol(net: str, x_mm: float, y_mm: float) -> dict:
+    def add_power_symbol(
+        net: str,
+        x_mm: float,
+        y_mm: float,
+        rotation: float = 0,
+        symbol: str | None = None,
+        compact: bool = False,
+        hide_value: bool = False,
+    ) -> dict:
         """Place a power symbol (e.g. +5V, +3V3, GND, PWR_FLAG) from the `power` library.
 
         Auto-assigns a hidden `#PWR####` reference (`#FLG####` for PWR_FLAG).
-        The library symbol id is `power:{net}`; if that doesn't exist in the
-        index, the call fails with a hint listing valid power nets.
+        The library symbol is `power:{symbol or net}`; if that doesn't exist in
+        the index, the call fails with a hint listing valid power symbols.
+
+        Args:
+            net: net name. A power symbol's value is its net, so a net with no
+                symbol of its own (e.g. "+5V_PD") can use `symbol="+5V"`.
+            rotation: 0/90/180/270 CCW. Supply symbols point up at 0, ground
+                symbols down; rotate so the symbol points away from the pin.
+            compact: for a symbol pointing up or down on a densely pinned part
+                (e.g. an IC's top or bottom row): its text runs along the
+                symbol like a net label instead of horizontally, so it
+                doesn't run into labels on neighbouring pins.
+            hide_value: don't show the net name (e.g. for GND, where the
+                symbol itself says it).
         """
-        candidate = f"power:{net}"
+        candidate = f"power:{symbol or net}"
         idx = lib_tools._ensure_index()
         if candidate not in idx["symbols"]:
             available = sorted(
                 k.split(":", 1)[1] for k in idx["symbols"] if k.startswith("power:")
             )
             raise KeyError(
-                f"unknown power net {net!r} (looked up {candidate!r}); "
+                f"unknown power symbol {candidate!r}; "
                 f"available: {available[:20]}{'...' if len(available) > 20 else ''}"
             )
 
         tree, path = _load_active_schematic()
-        ref = _next_power_reference(tree, "#FLG" if net == "PWR_FLAG" else "#PWR")
+        is_flag = (symbol or net) == "PWR_FLAG"
+        ref = _next_power_reference(tree, "#FLG" if is_flag else "#PWR")
         lib_path, sym_name, meta = _resolve_lib_symbol(candidate)
         sym_def = ed.fetch_symbol_def(lib_path, sym_name)
         proj = state.get_active()
@@ -271,19 +346,23 @@ def register(mcp) -> None:
             value=net,
             x_mm=x_mm,
             y_mm=y_mm,
-            rotation=0,
+            rotation=rotation,
             sym_def_node=sym_def,
             project_name=proj.name,
             instance_path=_instance_path(),
             footprint=meta.get("default_footprint", ""),
             datasheet=meta.get("datasheet", "~"),
             description=meta.get("description", ""),
+            compact_power_text=compact,
+            hide_value=hide_value,
         )
         backup = _save_with_backup(tree, path)
         return {
             "net": net,
+            "symbol": candidate,
             "reference": ref,
             "position_mm": [x_mm, y_mm],
+            "rotation": rotation,
             "backup": str(backup) if backup else None,
         }
 

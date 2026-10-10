@@ -135,14 +135,15 @@ def require_on_grid(x_k: float, y_k: float, what: str, page_h: float) -> None:
 
 
 def require_pins_on_grid(
-    sym_def: list, x_k: float, y_k: float, rot: int, reference: str, page_h: float
+    sym_def: list, x_k: float, y_k: float, rot: int, reference: str, page_h: float,
+    mirror: str | None = None,
 ) -> None:
     """Refuse a symbol placement whose visible pin ends miss the 100 mil grid.
 
     The symbol origin itself may be off grid (Device:R pins are 150 mil from
     its centre); the error names the nearest origin that puts the pins on it.
     """
-    pin_ends = symbol_outline(sym_def, x_k, y_k, rot)[1]
+    pin_ends = symbol_outline(sym_def, x_k, y_k, rot, mirror)[1]
     if all(_on_grid(px) and _on_grid(py) for px, py in pin_ends):
         return
     px, py = pin_ends[0]
@@ -348,8 +349,40 @@ def _xy(node: list | None) -> tuple[float, float] | None:
     return float(node[1]), float(node[2])
 
 
+MIRRORS = (None, "x", "y")
+
+
+def orient_xy(lx: float, ly: float, rot: float, mirror: str | None = None) -> tuple[float, float]:
+    """Library point (Y up) -> offset from the symbol origin (Y up).
+
+    KiCAD rotates first, then mirrors on screen: `(mirror y)` flips left and
+    right, `(mirror x)` flips up and down (checked against kicad-cli).
+    """
+    rx, ry = rotate_xy(lx, ly, rot)
+    if mirror == "y":
+        rx = -rx
+    elif mirror == "x":
+        ry = -ry
+    return rx, ry
+
+
+def orient_angle(angle: float, rot: float, mirror: str | None = None) -> int:
+    """Library pin angle -> its direction on the sheet (degrees, CCW, Y up)."""
+    a = int(round(angle + rot)) % 360
+    if mirror == "y":
+        a = (180 - a) % 360
+    elif mirror == "x":
+        a = (-a) % 360
+    return a
+
+
+def instance_mirror(s_node: list) -> str | None:
+    m = find_child(s_node, "mirror")
+    return str(m[1]) if m is not None and len(m) >= 2 else None
+
+
 def symbol_outline(
-    symbol_def_node: list, sx: float, sy: float, rot: int
+    symbol_def_node: list, sx: float, sy: float, rot: int, mirror: str | None = None
 ) -> tuple[tuple[float, float, float, float], list[tuple[float, float]]]:
     """Outline of a placed symbol in KiCAD file coords (Y down).
 
@@ -382,7 +415,7 @@ def symbol_outline(
             body.append((px + dx, py + dy))
 
     def to_file(p: tuple[float, float]) -> tuple[float, float]:
-        rx, ry = rotate_xy(p[0], p[1], rot)  # library coords are Y up
+        rx, ry = orient_xy(p[0], p[1], rot, mirror)  # library coords are Y up
         return sx + rx, sy - ry
 
     body_f = [to_file(p) for p in body] or [(sx, sy)]
@@ -392,65 +425,89 @@ def symbol_outline(
     return (min(xs), min(ys), max(xs), max(ys)), ends_f
 
 
-def _field_sides(symbol_def_node: list, sx: float, sy: float, rot: int):
+def _field_sides(symbol_def_node: list, sx: float, sy: float, rot: int, mirror: str | None = None):
     """Pick the side of the symbol for its Reference/Value text: the first of
     right, left, top, bottom that has no pins. Returns (side, bbox)."""
-    bbox, pin_ends = symbol_outline(symbol_def_node, sx, sy, rot)
-    x0, y0, x1, y1 = bbox
-    eps = 1e-6
+    bbox, _ = symbol_outline(symbol_def_node, sx, sy, rot, mirror)
+    # A pin's side follows from the direction it points into the body (its
+    # library angle plus the symbol rotation), not from where it ends: bodies
+    # wider than their pins (LED arrows) or flat ones (inductor arcs) would
+    # otherwise hide which sides carry pins.
+    side_of = {0: "left", 90: "bottom", 180: "right", 270: "top"}
     used = set()
-    for px, py in pin_ends:
-        if px >= x1 - eps and not (py <= y0 + eps or py >= y1 - eps):
-            used.add("right")
-        if px <= x0 + eps and not (py <= y0 + eps or py >= y1 - eps):
-            used.add("left")
-        if py <= y0 + eps:
-            used.add("top")
-        if py >= y1 - eps:
-            used.add("bottom")
+    for item in _drawn_items(symbol_def_node):
+        if head_of(item) == "pin" and not _is_hidden(item):
+            angle = orient_angle(_pin_local_at(item)[2], rot, mirror)
+            if angle in side_of:
+                used.add(side_of[angle])
     for side in ("right", "left", "top", "bottom"):
         if side not in used:
             return side, bbox
-    return "top", bbox
+    # Pins on every side: use the top-left corner, clear of all pin rows.
+    return "corner", bbox
+
+
+TEXT_SIDES = ("right", "left", "top", "bottom", "corner")
+
+
+# Extra flip of the stored horizontal justification caused by mirroring, per
+# (rotation, mirror), measured by rendering every case with kicad-cli:
+# a left/right mirror reverses it at every rotation, an up/down one never.
+_MIRROR_JUSTIFY_FLIP: dict[tuple[int, str], bool] = {(r, "y"): True for r in (0, 90, 180, 270)}
+
+
+def field_layout(
+    symbol_def_node: list, sx: float, sy: float, rot: int, side: str | None = None,
+    mirror: str | None = None, n_lines: int = 2,
+) -> tuple[float, list[float], str, int]:
+    """Where to put `n_lines` stacked field lines (Reference first) beside a
+    symbol, clear of its outline.
+
+    Returns (x, [y per line], stored justification, stored angle), in file
+    coords. Angle and justification are stored relative to the symbol's
+    orientation in KiCAD, so they are chosen here such that the text reads
+    horizontally and grows away from the symbol at any rotation or mirror.
+    `side` forces where the text goes (one of TEXT_SIDES); by default it is
+    the first side without pins.
+    """
+    auto_side, (x0, y0, x1, y1) = _field_sides(symbol_def_node, sx, sy, rot, mirror)
+    if side is None:
+        side = auto_side
+    elif side not in TEXT_SIDES:
+        raise ValueError(f"text_side must be one of {TEXT_SIDES} (got {side!r})")
+    half = FIELD_TEXT_MM / 2
+    span = (n_lines - 1) * FIELD_LINE_MM
+    if side in ("right", "left"):
+        x, grow = (x1 + FIELD_GAP_MM, "left") if side == "right" else (x0 - FIELD_GAP_MM, "right")
+        first = (y0 + y1) / 2 - span / 2
+    elif side == "top":
+        x, grow = x0, "left"
+        first = y0 - FIELD_GAP_MM - half - span
+    elif side == "corner":
+        # Left of the outline and above it: clear of the left pins' labels
+        # and of the labels rising from the top pins.
+        x, grow = x0 - FIELD_GAP_MM, "right"
+        first = y0 - half - span
+    else:
+        x, grow = x0, "left"
+        first = y1 + FIELD_GAP_MM + half
+    ys = [round_mm(first + i * FIELD_LINE_MM) for i in range(n_lines)]
+    # Rotation 90/180 mirrors the stored justification on screen; so can a mirror.
+    flip = rot in (90, 180)
+    if mirror and _MIRROR_JUSTIFY_FLIP.get((rot, mirror), False):
+        flip = not flip
+    justify = {"left": "right", "right": "left"}[grow] if flip else grow
+    angle = 90 if rot in (90, 270) else 0
+    return round_mm(x), ys, justify, angle
 
 
 def place_ref_value(
-    symbol_def_node: list, sx: float, sy: float, rot: int
+    symbol_def_node: list, sx: float, sy: float, rot: int, side: str | None = None,
+    mirror: str | None = None,
 ) -> tuple[tuple[float, float, str], tuple[float, float, str], int]:
-    """Anchor points for Reference and Value, stacked on two lines beside the
-    symbol and clear of its outline.
-
-    Returns ((ref_x, ref_y, justify), (val_x, val_y, justify), field_angle),
-    in file coords. Field angle and justification are stored relative to the
-    symbol's orientation in KiCAD, so they are chosen here such that the text
-    reads horizontally and grows away from the symbol at any rotation.
-    """
-    side, (x0, y0, x1, y1) = _field_sides(symbol_def_node, sx, sy, rot)
-    half = FIELD_TEXT_MM / 2
-    cy = (y0 + y1) / 2
-    if side == "right":
-        x, grow = x1 + FIELD_GAP_MM, "left"
-        ref_y, val_y = cy - FIELD_LINE_MM / 2, cy + FIELD_LINE_MM / 2
-    elif side == "left":
-        x, grow = x0 - FIELD_GAP_MM, "right"
-        ref_y, val_y = cy - FIELD_LINE_MM / 2, cy + FIELD_LINE_MM / 2
-    elif side == "top":
-        x, grow = x0, "left"
-        val_y = y0 - FIELD_GAP_MM - half
-        ref_y = val_y - FIELD_LINE_MM
-    else:
-        x, grow = x0, "left"
-        ref_y = y1 + FIELD_GAP_MM + half
-        val_y = ref_y + FIELD_LINE_MM
-    # Rotation 90/180 mirrors the stored justification on screen.
-    flip = {"left": "right", "right": "left"}
-    justify = flip[grow] if rot in (90, 180) else grow
-    angle = 90 if rot in (90, 270) else 0
-    return (
-        (round_mm(x), round_mm(ref_y), justify),
-        (round_mm(x), round_mm(val_y), justify),
-        angle,
-    )
+    """Reference and Value anchors: ((x, y, justify), (x, y, justify), angle)."""
+    x, ys, justify, angle = field_layout(symbol_def_node, sx, sy, rot, side, mirror, 2)
+    return (x, ys[0], justify), (x, ys[1], justify), angle
 
 
 def _lib_property(symbol_def_node: list, name: str) -> list | None:
@@ -461,9 +518,17 @@ def _lib_property(symbol_def_node: list, name: str) -> list | None:
 
 
 def _power_value_prop(
-    symbol_def_node: list, value: str, x_k: float, y_k: float, rot: int
+    symbol_def_node: list, value: str, x_k: float, y_k: float, rot: int,
+    compact: bool = False,
 ) -> list:
-    """Value field of a power symbol, positioned and styled as in its library."""
+    """Value field of a power symbol, positioned and styled as in its library.
+
+    On a symbol rotated 90/270 (pointing sideways) the text is kept
+    horizontal and starts at the library offset beyond the tip, growing away
+    from the pin, instead of turning vertical. With `compact`, a symbol
+    pointing up or down gets vertical text growing away from the pin, like a
+    net label, so it fits beside neighbouring pins at 100 mil pitch.
+    """
     lib = _lib_property(symbol_def_node, "Value")
     lib_at = find_child(lib, "at") if lib else None
     lx, ly, langle = 0.0, 0.0, 0.0
@@ -474,6 +539,19 @@ def _power_value_prop(
     if effects is None:
         effects = [sym("effects"), [sym("font"), [sym("size"), 1.27, 1.27]]]
     effects[1:] = [c for c in effects[1:] if not is_call(c, "hide")]
+    if rot in (90, 270) and abs(rx) > 1e-6:
+        grow = "left" if rx > 0 else "right"  # text extends towards +x / -x
+        # Rotation 90 mirrors the stored justification on screen (see place_ref_value).
+        justify = {"left": "right", "right": "left"}[grow] if rot == 90 else grow
+        effects[1:] = [c for c in effects[1:] if not is_call(c, "justify")]
+        effects.append([sym("justify"), sym(justify)])
+        langle = 90.0
+    elif compact and rot in (0, 180) and abs(ry) > 1e-6:
+        grow = "left" if ry > 0 else "right"  # vertical text reads upwards
+        justify = {"left": "right", "right": "left"}[grow] if rot == 180 else grow
+        effects[1:] = [c for c in effects[1:] if not is_call(c, "justify")]
+        effects.append([sym("justify"), sym(justify)])
+        langle = 90.0
     return [
         sym("property"), "Value", value,
         [sym("at"), round_mm(x_k + rx), round_mm(y_k - ry), langle],
@@ -496,14 +574,29 @@ def build_symbol_instance(
     datasheet: str = "~",
     description: str = "",
     sym_def_node: list | None = None,
+    fields: dict[str, str] | None = None,
+    compact_power_text: bool = False,
+    text_side: str | None = None,
+    display_field: str | None = None,
+    hide_value: bool = False,
+    mirror: str | None = None,
+    show_fields: list[str] | None = None,
 ) -> list:
     """Construct a new (symbol ...) instance node ready to inject into the schematic.
 
     With `sym_def_node`, Reference and Value are laid out beside the symbol
-    (see `place_ref_value`); power symbols keep the library's Value position
+    (see `field_layout`); power symbols keep the library's Value position
     and hide their `#PWR` reference. Footprint/Datasheet/Description are
-    hidden metadata anchored at the symbol origin.
+    hidden metadata anchored at the symbol origin. `show_fields` names extra
+    `fields` shown on their own lines below the Value; other fields are hidden.
     """
+    if mirror not in MIRRORS:
+        raise ValueError(f"mirror must be one of {MIRRORS} (got {mirror!r})")
+    show_fields = list(show_fields or [])
+    wanted = show_fields + ([display_field] if display_field else [])
+    missing = [f for f in wanted if f not in (fields or {})]
+    if missing:
+        raise ValueError(f"fields {missing} are not among the symbol's fields {list(fields or {})}")
     x_k, y_k = mcp_to_kicad_xy(x_mcp, y_mcp, page_h)
     x_k, y_k = round_mm(x_k), round_mm(y_k)
 
@@ -531,17 +624,27 @@ def build_symbol_instance(
         val_prop = _prop("Value", value, hide=False)
     elif is_power:
         ref_prop = _prop("Reference", reference, hide=True)
-        val_prop = _power_value_prop(sym_def_node, value, x_k, y_k, rotation_deg)
-    else:
-        ref_at, val_at, angle = place_ref_value(sym_def_node, x_k, y_k, rotation_deg)
-        ref_prop = _prop(
-            "Reference", reference, hide=False,
-            at=(ref_at[0], ref_at[1], angle), justify=[sym(ref_at[2])],
+        val_prop = _power_value_prop(
+            sym_def_node, value, x_k, y_k, rotation_deg, compact_power_text
         )
-        val_prop = _prop(
-            "Value", value, hide=False,
-            at=(val_at[0], val_at[1], angle), justify=[sym(val_at[2])],
+        if hide_value:
+            find_child(val_prop, "effects").append([sym("hide"), sym("yes")])
+    visible: dict[str, list] = {}
+    if sym_def_node is not None and not is_power:
+        fx, ys, just, angle = field_layout(
+            sym_def_node, x_k, y_k, rotation_deg, text_side, mirror, 2 + len(show_fields)
         )
+
+        def line(i: int) -> dict:
+            return {"at": (fx, ys[i], angle), "justify": [sym(just)]}
+
+        ref_prop = _prop("Reference", reference, hide=False, **line(0))
+        val_prop = _prop("Value", value, hide=bool(display_field), **line(1))
+        # `display_field` (e.g. "MPN") is shown where the Value would be.
+        if display_field:
+            visible[display_field] = _prop(display_field, fields[display_field], hide=False, **line(1))
+        for i, name in enumerate(show_fields):
+            visible[name] = _prop(name, fields[name], hide=False, **line(2 + i))
 
     pin_nodes = [
         [sym("pin"), num, [sym("uuid"), str(uuid.uuid4())]]
@@ -566,6 +669,7 @@ def build_symbol_instance(
         sym("symbol"),
         [sym("lib_id"), qualified_lib_id],
         [sym("at"), x_k, y_k, rotation_deg],
+        *([[sym("mirror"), sym(mirror)]] if mirror else []),
         [sym("unit"), 1],
         [sym("exclude_from_sim"), sym("no")],
         [sym("in_bom"), sym("yes")],
@@ -577,6 +681,7 @@ def build_symbol_instance(
         _prop("Footprint", footprint, hide=True),
         _prop("Datasheet", datasheet, hide=True),
         _prop("Description", description, hide=True),
+        *(visible.get(name) or _prop(name, val, hide=True) for name, val in (fields or {}).items()),
         *pin_nodes,
         instances_node,
     ]
@@ -602,8 +707,18 @@ def add_symbol(
     footprint: str = "",
     datasheet: str = "~",
     description: str = "",
+    fields: dict[str, str] | None = None,
+    compact_power_text: bool = False,
+    text_side: str | None = None,
+    display_field: str | None = None,
+    hide_value: bool = False,
+    mirror: str | None = None,
+    show_fields: list[str] | None = None,
 ) -> list:
     """Inject a symbol into the schematic. Returns the new (symbol ...) node.
+
+    `fields` adds extra (hidden) properties such as an MPN.
+    `compact_power_text`: see `_power_value_prop`.
 
     `instance_path` is the KiCAD instance path (e.g. `/<root_uuid>` for the
     root sheet, `/<root_uuid>/<sheet_uuid>` for a child). If None, defaults
@@ -621,12 +736,11 @@ def add_symbol(
         instance_path = f"/{_schematic_uuid(tree)}"
 
     lib_entry_def = make_lib_symbol_entry(sym_def_node, qualified_lib_id)
-    x0, y0, x1, y1 = symbol_outline(lib_entry_def, *mcp_to_kicad_xy(x_mm, y_mm, page_h), rot)[0]
+    origin_k = mcp_to_kicad_xy(x_mm, y_mm, page_h)
+    x0, y0, x1, y1 = symbol_outline(lib_entry_def, *origin_k, rot, mirror)[0]
     for corner in ((x0, y0), (x1, y1)):
         require_inside_frame(tree, *corner, f"symbol {reference}")
-    require_pins_on_grid(
-        lib_entry_def, *mcp_to_kicad_xy(x_mm, y_mm, page_h), rot, reference, page_h
-    )
+    require_pins_on_grid(lib_entry_def, *origin_k, rot, reference, page_h, mirror)
 
     # Inject the lib symbol definition (idempotent on qualified id).
     inject_lib_symbol(tree, lib_entry_def)
@@ -647,8 +761,22 @@ def add_symbol(
         datasheet=datasheet,
         description=description,
         sym_def_node=lib_entry_def,
+        fields=fields,
+        compact_power_text=compact_power_text,
+        text_side=text_side,
+        display_field=display_field,
+        hide_value=hide_value,
+        mirror=mirror,
+        show_fields=show_fields,
     )
     tree.append(instance)
+    # A pin placed on an existing wire (e.g. a power symbol on a rail) only
+    # connects through a junction.
+    if reference and not reference.endswith("?"):
+        page_h = page_height_mm(tree)
+        own = [(p["position_mm"][0], page_h - p["position_mm"][1])
+               for p in list_pins_for_symbol(tree, reference)]
+        _junctions_where_needed(tree, own)
     return instance
 
 
@@ -689,11 +817,12 @@ def move_symbol(
     rot = normalize_rotation(rotation) if rotation is not None else int(float(at[3]))
     lib_id = find_child(s_node, "lib_id")
     sym_def = find_lib_symbol_def(tree, lib_id[1]) if lib_id and len(lib_id) >= 2 else None
+    mirror = instance_mirror(s_node)
     if sym_def is not None:
-        x0, y0, x1, y1 = symbol_outline(sym_def, x_k, y_k, rot)[0]
+        x0, y0, x1, y1 = symbol_outline(sym_def, x_k, y_k, rot, mirror)[0]
         for corner in ((x0, y0), (x1, y1)):
             require_inside_frame(tree, *corner, f"symbol {reference}")
-        require_pins_on_grid(sym_def, x_k, y_k, rot, reference, page_h)
+        require_pins_on_grid(sym_def, x_k, y_k, rot, reference, page_h, mirror)
 
     dx, dy = x_k - float(at[1]), y_k - float(at[2])
     at[1], at[2], at[3] = x_k, y_k, rot
@@ -714,7 +843,7 @@ def _relayout_ref_value(s_node: list, sym_def: list, x_k: float, y_k: float, rot
             fresh = _power_value_prop(sym_def, props["Value"][2], x_k, y_k, rot)
             props["Value"][3:] = fresh[3:]
         return
-    ref_at, val_at, angle = place_ref_value(sym_def, x_k, y_k, rot)
+    ref_at, val_at, angle = place_ref_value(sym_def, x_k, y_k, rot, mirror=instance_mirror(s_node))
     for name, (fx, fy, justify) in (("Reference", ref_at), ("Value", val_at)):
         prop = props.get(name)
         if prop is None:
@@ -822,11 +951,20 @@ def _add_needed_junctions(tree: list, new_wire: list) -> None:
     if ends is None:
         return
     wires = [w for w in (_wire_ends(c) for c in tree[1:] if is_call(c, "wire")) if w]
-    junctions = [_xy(find_child(c, "at")) for c in tree[1:] if is_call(c, "junction")]
     pins = _pin_points_file(tree)
     candidates = list(ends) + [
         p for p in [e for w in wires for e in w] + pins if _strictly_inside(p, *ends)
     ]
+    _junctions_where_needed(tree, candidates, wires, pins)
+
+
+def _junctions_where_needed(tree, candidates, wires=None, pins=None) -> None:
+    """Add a junction at each candidate point where three or more connections meet."""
+    if wires is None:
+        wires = [w for w in (_wire_ends(c) for c in tree[1:] if is_call(c, "wire")) if w]
+    if pins is None:
+        pins = _pin_points_file(tree)
+    junctions = [_xy(find_child(c, "at")) for c in tree[1:] if is_call(c, "junction")]
     for p in candidates:
         if any(j and _same(p, j) for j in junctions):
             continue
@@ -853,6 +991,9 @@ def add_label(
     angle_map = {"right": 0, "up": 90, "left": 180, "down": 270}
     if orientation not in angle_map:
         raise ValueError(f"orientation must be one of {list(angle_map)}")
+    # KiCAD draws the text from the stored justification: labels pointing
+    # left or down must be right-justified to grow away from their anchor.
+    h_justify = "left" if orientation in ("right", "up") else "right"
     node = [
         sym("label"),
         net_name,
@@ -860,7 +1001,7 @@ def add_label(
         [
             sym("effects"),
             [sym("font"), [sym("size"), 1.27, 1.27]],
-            [sym("justify"), sym("left"), sym("bottom")],
+            [sym("justify"), sym(h_justify), sym("bottom")],
         ],
         [sym("uuid"), str(uuid.uuid4())],
     ]
@@ -1254,17 +1395,14 @@ def list_pins_for_symbol(tree: list, reference: str) -> list[dict]:
     if not at or len(at) < 4:
         raise ValueError(f"symbol {reference!r} has malformed (at ...)")
     sx, sy, srot = float(at[1]), float(at[2]), float(at[3])
+    mirror = instance_mirror(s_node)
     page_h = page_height_mm(tree)
 
     out = []
     for pin_node, _unit in _iter_pins(sym_def):
         lx, ly, lrot = _pin_local_at(pin_node)
-        # KiCAD rotation is CCW. Library coords have Y down; instance rotation
-        # is also applied in those coords.
-        rx, ry = rotate_xy(lx, ly, srot)
-        # In KiCAD, pin local Y has the same orientation as schematic Y (both
-        # "down"), but rotate_xy uses math convention (Y up). Since both
-        # systems are consistent, rotate_xy + add gives the right result.
+        # Library coords are Y up; KiCAD rotates CCW, then mirrors.
+        rx, ry = orient_xy(lx, ly, srot, mirror)
         wx_kicad = sx + rx
         wy_kicad = sy - ry  # flip because KiCAD Y is down vs math Y up
         mcp_x, mcp_y = wx_kicad, page_h - wy_kicad
@@ -1274,7 +1412,7 @@ def list_pins_for_symbol(tree: list, reference: str) -> list[dict]:
                 "number": number,
                 "name": name,
                 "position_mm": [round_mm(mcp_x), round_mm(mcp_y)],
-                "angle": (lrot + srot) % 360,
+                "angle": orient_angle(lrot, srot, mirror),
             }
         )
     return out
