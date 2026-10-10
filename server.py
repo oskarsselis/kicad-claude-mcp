@@ -66,7 +66,13 @@ logger = setup_logging()
 # Sent to every MCP client on connect, so these conventions apply on any
 # machine without local configuration.
 INSTRUCTIONS = """\
-KiCad MCP: conventions for drawing schematics.
+KiCad MCP: conventions for schematics and PCBs (full list:
+docs/DESIGN_RULES.md in the server's repository). They apply to every project
+unless the project asks otherwise.
+
+General: don't add, remove or change any part, value or net from the source
+data (CSV, netlist, datasheet); if something can't be mapped, stop and ask.
+Check that each footprint's pad numbers match its symbol's pin numbers.
 
 Coordinates: millimetres, origin at the bottom-left of the page, Y pointing up.
 On A4 the drawing frame spans x 10..287, y 8.28..198.28 (A3: x 10..410,
@@ -118,6 +124,9 @@ Wiring and labels:
 - Keep it compact: short wires, few bends, parts close to the pins they serve.
 
 Text and spacing:
+- Reference/Value text uses the project's default text size (KiCad's
+  Schematic Setup, 50 mil unless changed); set_schematic_text_size changes it
+  for symbols placed afterwards.
 - Reference and value are placed automatically beside each symbol, on the
   side without pins; text_side overrides it (e.g. for long values).
 - KiCad treats a symbol as one rectangle around its body, pins and visible
@@ -133,6 +142,37 @@ wire, crowding, grid and frame). Compare `nets` with the intended circuit,
 and open the PDF it returns and look at it: the checks cannot judge
 readability or whether the circuit does what was asked. Report ERC results
 exactly as returned.
+
+PCB setup:
+- Import from the schematic (add_footprint for each part, then
+  update_pcb_from_schematic): footprints carry the schematic's fields, BOM
+  flags and symbol links.
+- Hide all references and values (set_footprint_text_visibility).
+- 4 layers (set_layer_count(4)): F.Cu and B.Cu carry signals and power;
+  In1.Cu and In2.Cu are GND layers (set_copper_layer(..., "power", ...)),
+  with no pour until asked.
+- Disable F.Fab and B.Fab (set_layers_enabled(["F.Fab", "B.Fab"])), after
+  set_layer_count, which rebuilds the layer list.
+- Design rules from the chosen fab's published capabilities
+  (apply_fab_preset); state which limits the fab doesn't publish.
+
+PCB placement:
+- Connectors on the board edges, opening outwards.
+- Group related parts.
+- Decoupling capacitors and all supporting parts as close as possible to the
+  IC pins they serve, the connecting pad facing the pin.
+- Rotate ICs so high-speed or differential pins face their connector; keep
+  the lane between them clear.
+- Power paths short and straight (connector, sense resistor, switches,
+  output connector), parts oriented along the path, no part of another net
+  on it. Signal circuits (e.g. level shifters) near the connector they serve,
+  out of the power path. Sensors next to what they monitor.
+- Make the board as compact as possible within these rules, and report what
+  else would shrink it.
+
+PCB checks: run_drc with 0 errors and every warning explained; render the
+board and look at it; report decoupling pad-to-pin distances, power path
+and differential pair lengths.
 """
 
 mcp = FastMCP("kicad-claude", instructions=INSTRUCTIONS)

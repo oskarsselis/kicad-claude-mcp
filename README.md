@@ -10,6 +10,9 @@
 The server edits `.kicad_sch` / `.kicad_pcb` / `.kicad_pro` files directly.
 You drive it via Claude Code; you open KiCAD only to review the result.
 
+The schematic and PCB rules it follows are listed in
+[docs/DESIGN_RULES.md](docs/DESIGN_RULES.md).
+
 ---
 
 ## What you can build with this
