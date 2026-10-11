@@ -170,6 +170,7 @@ def register(mcp) -> None:
         display_field: str | None = None,
         mirror: str | None = None,
         show_fields: list[str] | None = None,
+        description: str | None = None,
     ) -> dict:
         """Add a symbol from the indexed KiCAD libraries (or the project's own
         `lib/` libraries, e.g. from create_symbol) to the active schematic.
@@ -194,7 +195,10 @@ def register(mcp) -> None:
             mirror: "y" flips the symbol left/right, "x" up/down (applied
                 after rotation, as in KiCAD).
             show_fields: names from `fields` to show on extra lines below the
-                Value (e.g. ["Voltage"]); other fields stay hidden.
+                Value (e.g. ["Voltage"]), as secondary text: smaller and grey.
+                Other fields stay hidden.
+            description: replaces the library's Description field (hidden),
+                e.g. the full rating text when the Value is kept short.
 
         Returns the placed symbol's identity. Refuses if `reference` already exists.
         """
@@ -216,7 +220,7 @@ def register(mcp) -> None:
             instance_path=_instance_path(),
             footprint=meta.get("default_footprint", "") if footprint is None else footprint,
             datasheet=meta.get("datasheet", "~"),
-            description=meta.get("description", ""),
+            description=meta.get("description", "") if description is None else description,
             fields=fields,
             text_side=text_side,
             display_field=display_field,
@@ -288,20 +292,53 @@ def register(mcp) -> None:
         }
 
     @mcp.tool()
-    def add_wire(x1_mm: float, y1_mm: float, x2_mm: float, y2_mm: float) -> dict:
+    def add_wire(
+        x1_mm: float, y1_mm: float, x2_mm: float, y2_mm: float, color: str | None = None,
+    ) -> dict:
         """Add a straight wire segment between two points (MCP coords).
 
         Both ends must be on the 100 mil (2.54 mm) grid. Junctions are added
-        automatically where three or more connections meet.
+        automatically where three or more connections meet. `color`: "red",
+        "blue", "green" or "black" (default: KiCAD's wire colour); power
+        wires are coloured in one go by color_power_wires.
         """
         tree, path = _load_active_schematic()
-        ed.add_wire(tree, x1_mm, y1_mm, x2_mm, y2_mm)
+        ed.add_wire(tree, x1_mm, y1_mm, x2_mm, y2_mm, color=color)
         backup = _save_with_backup(tree, path)
         return {
             "from_mm": [x1_mm, y1_mm],
             "to_mm": [x2_mm, y2_mm],
             "backup": str(backup) if backup else None,
         }
+
+    @mcp.tool()
+    def color_power_wires(color: str = "red", include_ground: bool = False) -> dict:
+        """Colour every wire connected to a power symbol (power port), e.g. the
+        VBUS, +5V and +3V3 rails, red. Call it after the wiring is done (and
+        again after changes). Ground wires keep the default colour unless
+        `include_ground`.
+        """
+        tree, path = _load_active_schematic()
+        result = ed.color_power_wires(tree, color, include_ground)
+        backup = _save_with_backup(tree, path)
+        result["backup"] = str(backup) if backup else None
+        return result
+
+    @mcp.tool()
+    def add_block(title: str, x_mm: float, y_mm: float, width_mm: float, height_mm: float) -> dict:
+        """Frame a functional block (e.g. "USB PD controller", "3V3 DC/DC"):
+        a dashed rectangle with its title in bold in the top-left corner.
+
+        (x_mm, y_mm) is the bottom-left corner (MCP coords); corners on the
+        100 mil grid, inside the frame. Blocks must not overlap. Keep each
+        block's symbols, wires and text inside it, with room below the title;
+        connect blocks with net labels, not wires.
+        """
+        tree, path = _load_active_schematic()
+        result = ed.add_block(tree, title, x_mm, y_mm, width_mm, height_mm, text_size=_field_text_mm())
+        backup = _save_with_backup(tree, path)
+        result["backup"] = str(backup) if backup else None
+        return result
 
     @mcp.tool()
     def add_label(

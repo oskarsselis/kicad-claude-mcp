@@ -319,3 +319,86 @@ def test_tools_use_the_project_text_size(tmp_path):
         assert sch_tools._field_text_mm() == pytest.approx(1.016)
     finally:
         state.clear_active()
+
+
+# ===== Drawing style: secondary fields, blocks, power wires, checks ======== #
+
+
+def test_shown_fields_are_secondary_smaller_and_grey(tree):
+    s = ed.add_symbol(
+        tree, qualified_lib_id="L:R", reference="C1", value="10µF", x_mm=101.6, y_mm=100.33,
+        rotation=0, sym_def_node=_def(_RESISTOR), project_name="t", text_size=1.016,
+        fields={"Voltage": "50 V", "Dielectric": "X7R"}, show_fields=["Voltage"],
+    )
+    volt = _prop(s, "Voltage")
+    font = sch_io.find_child(sch_io.find_child(volt, "effects"), "font")
+    assert _size(volt) == pytest.approx(1.016 * ed.SECONDARY_SCALE, abs=1e-3)
+    color = sch_io.find_child(font, "color")
+    assert [int(c) for c in color[1:4]] == list(ed.SECONDARY_COLOR[:3])
+    assert _hidden(_prop(s, "Dielectric"))
+    # Voltage sits below the Value, in the same column
+    assert _at(volt)[0] == _at(_prop(s, "Value"))[0] and _at(volt)[1] > _at(_prop(s, "Value"))[1]
+
+
+def test_add_block_draws_dashed_rectangle_with_title_and_refuses_overlap(tree):
+    ed.add_block(tree, "Power", 50.8, 101.6, 76.2, 50.8)
+    rect = next(c for c in tree if sch_io.is_call(c, "rectangle"))
+    stroke = sch_io.find_child(rect, "stroke")
+    assert str(sch_io.find_child(stroke, "type")[1]) == "dash"
+    blocks = list(ed.iter_blocks(tree))
+    assert blocks[0][0] == "Power"
+    with pytest.raises(ValueError, match="overlaps"):
+        ed.add_block(tree, "Other", 101.6, 127.0, 50.8, 50.8)
+    ed.add_block(tree, "Other", 132.08, 101.6, 25.4, 25.4)        # beside it: fine
+    with pytest.raises(ValueError):
+        ed.add_block(tree, "Off grid", 10.0, 101.6, 25.4, 25.4)
+
+
+def test_color_power_wires_colours_only_wires_on_power_nets(tree):
+    _place(tree, _POWER, "#PWR0001", "power:+5V", 101.6, 152.4, value="+5V")
+    ed.add_wire(tree, 101.6, 152.4, 114.3, 152.4)                  # on +5V
+    ed.add_wire(tree, 114.3, 152.4, 114.3, 139.7)                  # joined to it
+    ed.add_wire(tree, 127.0, 152.4, 139.7, 152.4)                  # unrelated
+    res = ed.color_power_wires(tree)
+    assert res["nets"] == ["+5V"] and res["colored_wires"] == 2
+    wires = [c for c in tree if sch_io.is_call(c, "wire")]
+    assert [ed.wire_color(w) for w in wires] == [(255, 0, 0), (255, 0, 0), None]
+
+
+def test_style_issues_flags_long_wires_lone_test_points_and_long_values(tree):
+    from kicad_claude.adapters import sch_verify
+
+    ed.add_wire(tree, 25.4, 101.6, 254.0, 101.6)                   # A4: limit 74.25 mm
+    _place(tree, _POWER, "#PWR0001", "power:+5V", 101.6, 152.4, value="+5V")
+    ed.add_wire(tree, 101.6, 152.4, 114.3, 152.4)                  # power wire, not red
+    tp_def = """
+(symbol "TestPoint"
+  (property "Reference" "TP" (at 0 3 0))
+  (property "Value" "TP" (at 0 5 0))
+  (symbol "TestPoint_0_1" (circle (center 0 3.302) (radius 0.762)))
+  (symbol "TestPoint_1_1"
+    (pin passive line (at 0 0 90) (length 2.54)
+      (name "1" (effects (font (size 1.27 1.27))))
+      (number "1" (effects (font (size 1.27 1.27)))))))
+"""
+    _place(tree, tp_def, "TP1", "Connector:TestPoint", 76.2, 152.4, value="VBUS")
+    _place(tree, _RESISTOR, "R1", "L:R", 50.8, 151.13, value="5 mΩ 1 %, ≥ 0.25 W")
+    issues = sch_verify.style_issues(tree)
+    assert issues["long_wires"] and issues["long_wires"][0]["span_mm"] == pytest.approx(228.6)
+    assert [e["reference"] for e in issues["lone_test_points"]] == ["TP1"]
+    assert [e["reference"] for e in issues["long_values"]] == ["R1"]
+    assert issues["uncolored_power_wires"][0]["nets"] == ["+5V"]
+    assert not issues["ref_value_layout"]
+    ed.color_power_wires(tree)
+    assert not sch_verify.style_issues(tree)["uncolored_power_wires"]
+
+
+def test_style_issues_flags_wires_and_symbols_across_a_block_border(tree):
+    from kicad_claude.adapters import sch_verify
+
+    ed.add_block(tree, "A", 50.8, 101.6, 50.8, 50.8)
+    ed.add_wire(tree, 76.2, 127.0, 127.0, 127.0)                    # leaves the block
+    _place(tree, _RESISTOR, "R1", "L:R", 101.6, 115.57)             # on the right border
+    issues = sch_verify.style_issues(tree)
+    items = {e["item"] for e in issues["crossing_blocks"]}
+    assert items == {"wire", "R1"}

@@ -10,6 +10,10 @@ sub-sheet:
 - crowding: KiCAD plots symbols whose bounding boxes (fields included)
   overlap a second time, so a reference drawn twice in the SVG export means
   that symbol collides with another one
+- drawing style: functional blocks (dashed rectangles) that overlap or are
+  crossed by wires, symbols or text; wires longer than a quarter of the sheet
+  width; power wires not coloured; test points not wired into the circuit;
+  long values; Reference/Value not stacked the usual way
 - a PDF of the schematic, for looking at it
 
 The parsing helpers are pure functions so they can be tested without KiCAD.
@@ -331,6 +335,146 @@ def wiring_issues(svg: str, tree: list, flip_h: float) -> dict[str, list[dict]]:
 
 
 # --------------------------------------------------------------------------- #
+# Drawing style
+# --------------------------------------------------------------------------- #
+
+MAX_VALUE_CHARS = 20
+POWER_WIRE_COLOR = ed.WIRE_COLORS["red"]
+
+
+def _segments_cross(a, b, c, d) -> bool:
+    """True if segments a-b and c-d intersect at a point inside both (not at an end)."""
+    def orient(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    o1, o2, o3, o4 = orient(a, b, c), orient(a, b, d), orient(c, d, a), orient(c, d, b)
+    return o1 * o2 < -1e-9 and o3 * o4 < -1e-9
+
+
+def _box_edges(box):
+    x0, y0, x1, y1 = box
+    return [((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))]
+
+
+def _crosses_border(box, block) -> bool:
+    """True if `box` lies partly inside and partly outside `block`."""
+    x0, y0, x1, y1 = box
+    a0, b0, a1, b1 = block
+    overlaps = x0 < a1 and a0 < x1 and y0 < b1 and b0 < y1
+    inside = a0 <= x0 and x1 <= a1 and b0 <= y0 and y1 <= b1
+    return overlaps and not inside
+
+
+def _is_test_point(s_node) -> bool:
+    lib_id = find_child(s_node, "lib_id")
+    ref = ed.get_symbol_property(s_node, "Reference") or ""
+    return bool(lib_id and "TestPoint" in str(lib_id[1])) or bool(re.fullmatch(r"TP\d+", ref))
+
+
+def style_issues(tree: list) -> dict[str, list[dict]]:
+    """Drawing-style checks that need only the schematic file.
+
+    - blocks_overlapping: functional blocks (rectangles) overlapping each other
+    - crossing_blocks: wires or symbols crossing a block border (connect
+      blocks with labels; keep each part inside its block)
+    - long_wires: connected wires spanning more than a quarter of the sheet
+      width (use net labels at both ends instead)
+    - uncolored_power_wires: wires on a power-symbol net that aren't red
+    - lone_test_points: test points whose pin isn't on a wire
+    - long_values: visible values with a comma or over MAX_VALUE_CHARS
+      characters (descriptions belong in hidden fields)
+    - ref_value_layout: Reference and Value not stacked with the Value right
+      below the Reference
+    """
+    page_h = ed.page_height_mm(tree)
+    page_w, _ = ed.page_size_mm(tree)
+
+    def mcp(x, y):
+        return [ed.round_mm(x), ed.round_mm(page_h - y)]
+
+    blocks = list(ed.iter_blocks(tree))
+    overlapping = []
+    for i, (ta, a) in enumerate(blocks):
+        for tb, b in blocks[i + 1:]:
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                overlapping.append({"blocks": [ta, tb]})
+
+    crossing = []
+    segs = wire_segments(tree)
+    for title, block in blocks:
+        edges = _box_edges(block)
+        for a, b in segs:
+            if any(_segments_cross(a, b, c, d) for c, d in edges):
+                crossing.append({"block": title, "item": "wire", "position_mm": mcp(*a)})
+        for ref, box in symbol_bodies(tree):
+            if _crosses_border(box, block):
+                crossing.append({"block": title, "item": ref, "position_mm": mcp(box[0], box[1])})
+
+    long_wires = []
+    limit = page_w / 4
+    for g in ed.wire_groups(tree):
+        pts = [e for w in g["wires"] for e in (ed._wire_ends(w) or ())]
+        if not pts:
+            continue
+        span = max(max(x for x, _ in pts) - min(x for x, _ in pts), max(y for _, y in pts) - min(y for _, y in pts))
+        if span > limit + 1e-6:
+            x0, y0 = min(x for x, _ in pts), min(y for _, y in pts)
+            long_wires.append({"nets": sorted(g["nets"]), "span_mm": round(span, 2),
+                               "limit_mm": round(limit, 2), "position_mm": mcp(x0, y0)})
+
+    uncolored = []
+    for g in ed.power_wire_groups(tree):
+        bad = [w for w in g["wires"] if ed.wire_color(w) != POWER_WIRE_COLOR]
+        if bad:
+            a = ed._wire_ends(bad[0])
+            uncolored.append({"nets": sorted(g["power_nets"]), "wires": len(bad),
+                              "position_mm": mcp(*a[0]) if a else None})
+
+    wire_ends = [e for e in (ed._wire_ends(c) for c in tree[1:] if is_call(c, "wire")) if e]
+    lone, long_values, layout = [], [], []
+    for s_node in ed.iter_instance_symbols(tree):
+        ref = ed.get_symbol_property(s_node, "Reference") or "?"
+        lib_id = find_child(s_node, "lib_id")
+        sym_def = ed.find_lib_symbol_def(tree, lib_id[1]) if lib_id else None
+        if sym_def is not None and find_child(sym_def, "power") is not None:
+            continue
+        if _is_test_point(s_node):
+            for p in ed.list_pins_for_symbol(tree, ref):
+                pt = (p["position_mm"][0], page_h - p["position_mm"][1])
+                if not any(_on_segment(pt, a, b) for a, b in wire_ends):
+                    lone.append({"reference": ref, "position_mm": p["position_mm"]})
+        props = {pr[1]: pr for pr in find_children(s_node, "property") if len(pr) >= 3}
+        value = props.get("Value")
+        if value is not None and _visible(value) and (", " in value[2] or len(value[2]) > MAX_VALUE_CHARS):
+            long_values.append({"reference": ref, "value": value[2]})
+        shown = [n for n in ("Reference", "Value") if n in props and _visible(props[n])]
+        if len(shown) == 2:
+            ra, va = find_child(props["Reference"], "at"), find_child(props["Value"], "at")
+            same_column = abs(float(ra[1]) - float(va[1])) < 0.01 and float(ra[3]) == float(va[3])
+            if not same_column or float(va[2]) <= float(ra[2]):
+                layout.append({"reference": ref})
+    return {
+        "blocks_overlapping": overlapping,
+        "crossing_blocks": crossing,
+        "long_wires": long_wires,
+        "uncolored_power_wires": uncolored,
+        "lone_test_points": lone,
+        "long_values": long_values,
+        "ref_value_layout": layout,
+    }
+
+
+def text_crossing_blocks(svg: str, tree: list, flip_h: float) -> list[dict]:
+    """Texts lying across a block's dashed border."""
+    out = []
+    for title, block in ed.iter_blocks(tree):
+        for t, x0, y0, x1, y1 in svg_text_boxes(svg):
+            if _crosses_border((x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1), block):
+                out.append({"block": title, "text": t,
+                            "position_mm": [round((x0 + x1) / 2, 2), round(flip_h - (y0 + y1) / 2, 2)]})
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Crowding
 # --------------------------------------------------------------------------- #
 
@@ -441,8 +585,12 @@ def verify(project_dir: Path, project_name: str, *, timeout: float = 120.0) -> d
 
     texts: dict[str, list[dict]] = {
         "text_outside_frame": [], "text_overlaps": [], "text_on_wires": [], "wires_through_symbols": [],
-        "labels_off_wire": [],
+        "labels_off_wire": [], "text_crossing_blocks": [],
     }
+    style: dict[str, list[dict]] = {}
+    for tree in trees:
+        for k, v in style_issues(tree).items():
+            style.setdefault(k, []).extend(v)
     svg_for_sheet = {}
     flip_h = ed.page_height_mm(trees[0])
     for svg_path in sorted(svg_dir.glob("*.svg")):
@@ -455,8 +603,10 @@ def verify(project_dir: Path, project_name: str, *, timeout: float = 120.0) -> d
     # Wiring checks need each page's own wires. The SVG file names don't say
     # which sheet they show, so only single-sheet designs are checked.
     if len(trees) == 1 and len(svg_for_sheet) == 1:
-        for k, v in wiring_issues(next(iter(svg_for_sheet.values())), trees[0], flip_h).items():
+        only_svg = next(iter(svg_for_sheet.values()))
+        for k, v in wiring_issues(only_svg, trees[0], flip_h).items():
             texts[k] += v
+        texts["text_crossing_blocks"] += text_crossing_blocks(only_svg, trees[0], flip_h)
 
     pdf = out_dir / f"{project_name}.pdf"
     kicad_cli._run(["sch", "export", "pdf", "-o", str(pdf), str(root)], timeout=timeout)
@@ -491,6 +641,32 @@ def verify(project_dir: Path, project_name: str, *, timeout: float = 120.0) -> d
         problems.append(
             f"crowded symbols (overlapping another symbol or its text): {', '.join(crowded)}"
         )
+    if texts["text_crossing_blocks"]:
+        items = ", ".join(repr(e["text"]) for e in texts["text_crossing_blocks"][:8])
+        problems.append(f"{len(texts['text_crossing_blocks'])} text(s) across a block border: {items}")
+    if style["blocks_overlapping"]:
+        items = ", ".join(" / ".join(e["blocks"]) for e in style["blocks_overlapping"][:8])
+        problems.append(f"overlapping blocks: {items}")
+    if style["crossing_blocks"]:
+        items = ", ".join(sorted({f"{e['item']} ({e['block']})" for e in style["crossing_blocks"]})[:8])
+        problems.append(f"{len(style['crossing_blocks'])} wire(s)/symbol(s) across a block border "
+                        f"(connect blocks with labels): {items}")
+    if style["long_wires"]:
+        items = ", ".join(f"{'/'.join(e['nets']) or '?'} {e['span_mm']} mm" for e in style["long_wires"][:8])
+        problems.append(f"{len(style['long_wires'])} wire run(s) longer than a quarter of the sheet width "
+                        f"({style['long_wires'][0]['limit_mm']} mm; use net labels at both ends): {items}")
+    if style["uncolored_power_wires"]:
+        items = ", ".join("/".join(e["nets"]) for e in style["uncolored_power_wires"][:8])
+        problems.append(f"power wires not red (run color_power_wires): {items}")
+    if style["lone_test_points"]:
+        items = ", ".join(e["reference"] for e in style["lone_test_points"][:8])
+        problems.append(f"test point(s) not wired into the circuit: {items}")
+    if style["long_values"]:
+        items = ", ".join(f"{e['reference']} {e['value']!r}" for e in style["long_values"][:8])
+        problems.append(f"value(s) longer than a short value (move the rest to fields): {items}")
+    if style["ref_value_layout"]:
+        items = ", ".join(e["reference"] for e in style["ref_value_layout"][:8])
+        problems.append(f"Reference/Value not stacked consistently: {items}")
 
     return {
         "ok": not problems,
@@ -501,6 +677,7 @@ def verify(project_dir: Path, project_name: str, *, timeout: float = 120.0) -> d
         **geometry,
         "crowded_symbols": crowded,
         **texts,
+        **style,
         "sheets": [f.name for f in files],
         "pdf": str(pdf),
         "netlist": str(net_path),

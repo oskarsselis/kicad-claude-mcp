@@ -12,6 +12,7 @@ helper does the conversion at the boundary.
 from __future__ import annotations
 
 import copy
+import re
 import shutil
 import uuid
 from datetime import datetime
@@ -318,7 +319,9 @@ def collect_pin_numbers(symbol_def_node: list) -> list[str]:
 
 FIELD_TEXT_MM = 1.27  # KiCAD default field font size
 FIELD_GAP_MM = 1.27  # clearance between the symbol outline and its field text
-FIELD_LINE_MM = 2.54  # spacing between the stacked Reference / Value lines
+FIELD_LINE_MM = 2.54  # spacing between the stacked Reference / Value lines (at 50 mil text)
+SECONDARY_SCALE = 0.8  # secondary fields (e.g. a capacitor's voltage) are smaller ...
+SECONDARY_COLOR = (110, 110, 110, 1)  # ... and grey
 
 
 def _is_hidden(node: list) -> bool:
@@ -476,7 +479,8 @@ def field_layout(
     elif side not in TEXT_SIDES:
         raise ValueError(f"text_side must be one of {TEXT_SIDES} (got {side!r})")
     half = text_size / 2
-    span = (n_lines - 1) * FIELD_LINE_MM
+    pitch = FIELD_LINE_MM * text_size / FIELD_TEXT_MM
+    span = (n_lines - 1) * pitch
     if side in ("right", "left"):
         x, grow = (x1 + FIELD_GAP_MM, "left") if side == "right" else (x0 - FIELD_GAP_MM, "right")
         first = (y0 + y1) / 2 - span / 2
@@ -491,7 +495,7 @@ def field_layout(
     else:
         x, grow = x0, "left"
         first = y1 + FIELD_GAP_MM + half
-    ys = [round_mm(first + i * FIELD_LINE_MM) for i in range(n_lines)]
+    ys = [round_mm(first + i * pitch) for i in range(n_lines)]
     # Rotation 90/180 mirrors the stored justification on screen; so can a mirror.
     flip = rot in (90, 180)
     if mirror and _MIRROR_JUSTIFY_FLIP.get((rot, mirror), False):
@@ -600,6 +604,7 @@ def build_symbol_instance(
     mirror: str | None = None,
     show_fields: list[str] | None = None,
     text_size: float = FIELD_TEXT_MM,
+    secondary: bool = True,
 ) -> list:
     """Construct a new (symbol ...) instance node ready to inject into the schematic.
 
@@ -608,8 +613,9 @@ def build_symbol_instance(
     and hide their `#PWR` reference. Footprint/Datasheet/Description are
     hidden metadata anchored at the symbol origin. `show_fields` names extra
     `fields` shown on their own lines below the Value; other fields are hidden.
-    `text_size` (mm) is the font height of the visible Reference, Value and
-    shown fields.
+    `text_size` (mm) is the font height of the visible Reference and Value;
+    shown fields are secondary: smaller (SECONDARY_SCALE) and grey, unless
+    `secondary` is False.
     """
     if mirror not in MIRRORS:
         raise ValueError(f"mirror must be one of {MIRRORS} (got {mirror!r})")
@@ -629,10 +635,17 @@ def build_symbol_instance(
         hide: bool,
         at: tuple[float, float, float] = (x_k, y_k, 0),
         justify: list | None = None,
+        minor: bool = False,
     ) -> list:
         node: list[Any] = [sym("property"), name, val, [sym("at"), *at]]
         size = 1.27 if hide else text_size
-        effects: list[Any] = [sym("effects"), [sym("font"), [sym("size"), size, size]]]
+        font: list[Any] = [sym("font")]
+        if minor:
+            size = round(text_size * SECONDARY_SCALE, 4)
+            font += [[sym("size"), size, size], [sym("color"), *SECONDARY_COLOR]]
+        else:
+            font.append([sym("size"), size, size])
+        effects: list[Any] = [sym("effects"), font]
         if justify:
             effects.append([sym("justify"), *justify])
         if hide:
@@ -666,7 +679,7 @@ def build_symbol_instance(
         if display_field:
             visible[display_field] = _prop(display_field, fields[display_field], hide=False, **line(1))
         for i, name in enumerate(show_fields):
-            visible[name] = _prop(name, fields[name], hide=False, **line(2 + i))
+            visible[name] = _prop(name, fields[name], hide=False, minor=secondary, **line(2 + i))
 
     pin_nodes = [
         [sym("pin"), num, [sym("uuid"), str(uuid.uuid4())]]
@@ -737,6 +750,7 @@ def add_symbol(
     mirror: str | None = None,
     show_fields: list[str] | None = None,
     text_size: float = FIELD_TEXT_MM,
+    secondary: bool = True,
 ) -> list:
     """Inject a symbol into the schematic. Returns the new (symbol ...) node.
 
@@ -792,6 +806,7 @@ def add_symbol(
         mirror=mirror,
         show_fields=show_fields,
         text_size=text_size,
+        secondary=secondary,
     )
     tree.append(instance)
     # A pin placed on an existing wire (e.g. a power symbol on a rail) only
@@ -892,8 +907,11 @@ def add_wire(
     y1_mm: float,
     x2_mm: float,
     y2_mm: float,
+    color: str | tuple | None = None,
 ) -> list:
     """Append a (wire ...) segment between two MCP-coord points. Returns the new node.
+
+    `color`: a name from WIRE_COLORS or an (r, g, b) tuple; default KiCAD's.
 
     Adds junctions where the new wire makes three or more connections meet at
     one point (e.g. a T onto the middle of an existing wire). KiCAD only joins
@@ -916,6 +934,8 @@ def add_wire(
         [sym("stroke"), [sym("width"), 0], [sym("type"), sym("default")]],
         [sym("uuid"), str(uuid.uuid4())],
     ]
+    if color is not None:
+        set_wire_color(node, color)
     tree.append(node)
     _add_needed_junctions(tree, node)
     return node
@@ -1050,6 +1070,202 @@ def add_no_connect(tree: list, x_mm: float, y_mm: float) -> list:
     ]
     tree.append(node)
     return node
+
+
+# --------------------------------------------------------------------------- #
+# Wire colours and nets
+# --------------------------------------------------------------------------- #
+
+WIRE_COLORS = {"red": (255, 0, 0), "blue": (0, 0, 194), "green": (0, 132, 0), "black": (0, 0, 0)}
+GROUND_NETS = re.compile(r"^(GND|AGND|DGND|PGND|GNDA|GNDD|GNDPWR|Earth|VSS)\w*$", re.IGNORECASE)
+
+
+def _rgb(color: str | tuple) -> tuple[int, int, int]:
+    if isinstance(color, str):
+        if color not in WIRE_COLORS:
+            raise ValueError(f"color must be one of {sorted(WIRE_COLORS)} or an (r, g, b) tuple")
+        return WIRE_COLORS[color]
+    r, g, b = (int(v) for v in color[:3])
+    return r, g, b
+
+
+def set_wire_color(wire: list, color: str | tuple | None) -> None:
+    """Set (or with None, clear) a wire's stroke colour."""
+    stroke = find_child(wire, "stroke")
+    if stroke is None:
+        stroke = [sym("stroke"), [sym("width"), 0], [sym("type"), sym("default")]]
+        wire.insert(2, stroke)
+    stroke[1:] = [c for c in stroke[1:] if not is_call(c, "color")]
+    if color is not None:
+        stroke.append([sym("color"), *_rgb(color), 1])
+
+
+def wire_color(wire: list) -> tuple[int, int, int] | None:
+    """A wire's stroke colour, or None for KiCAD's default (also colour 0 0 0 0)."""
+    c = find_child(find_child(wire, "stroke") or [], "color")
+    if c is None or len(c) < 5 or float(c[4]) == 0:
+        return None
+    return int(float(c[1])), int(float(c[2])), int(float(c[3]))
+
+
+def wire_groups(tree: list) -> list[dict]:
+    """Wires drawn connected to each other (shared ends, or an end on another
+    wire at a junction), with the net names given to each group by labels and
+    power symbols sitting on it.
+
+    Returns [{"wires": [wire nodes], "nets": {names}, "power_nets": {names}}];
+    `power_nets` are the names coming from power symbols (PWR_FLAG excluded).
+    """
+    wires = [c for c in tree[1:] if is_call(c, "wire")]
+    ends = [_wire_ends(w) for w in wires]
+    parent = list(range(len(wires)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    junctions = [j for j in (_xy(find_child(c, "at")) for c in tree[1:] if is_call(c, "junction")) if j]
+    for i, a in enumerate(ends):
+        if a is None:
+            continue
+        for k in range(i + 1, len(wires)):
+            b = ends[k]
+            if b is None:
+                continue
+            joined = any(_same(p, q) for p in a for q in b) or any(
+                _strictly_inside(p, *other) and any(_same(p, j) for j in junctions)
+                for p, other in ((a[0], b), (a[1], b), (b[0], a), (b[1], a))
+            )
+            if joined:
+                parent[root(i)] = root(k)
+
+    def touching(pt: tuple[float, float]) -> set[int]:
+        return {root(i) for i, e in enumerate(ends)
+                if e and (_same(pt, e[0]) or _same(pt, e[1]) or _strictly_inside(pt, *e))}
+
+    names: dict[int, set[str]] = {}
+    power: dict[int, set[str]] = {}
+    for c in tree[1:]:
+        if head_of(c) in ("label", "global_label", "hierarchical_label") and len(c) >= 2:
+            pt = _xy(find_child(c, "at"))
+            for r in touching(pt) if pt else ():
+                names.setdefault(r, set()).add(str(c[1]))
+    page_h = page_height_mm(tree)
+    for s_node in iter_instance_symbols(tree):
+        lib_id = find_child(s_node, "lib_id")
+        sym_def = find_lib_symbol_def(tree, lib_id[1]) if lib_id else None
+        if sym_def is None or find_child(sym_def, "power") is None:
+            continue
+        net = get_symbol_property(s_node, "Value") or ""
+        ref = get_symbol_property(s_node, "Reference") or ""
+        if not net or net == "PWR_FLAG" or ref.startswith("#FLG"):
+            continue
+        for p in list_pins_for_symbol(tree, ref):
+            for r in touching((p["position_mm"][0], page_h - p["position_mm"][1])):
+                names.setdefault(r, set()).add(net)
+                power.setdefault(r, set()).add(net)
+    groups: dict[int, list] = {}
+    for i, w in enumerate(wires):
+        groups.setdefault(root(i), []).append(w)
+    return [{"wires": ws, "nets": names.get(r, set()), "power_nets": power.get(r, set())}
+            for r, ws in groups.items()]
+
+
+def power_wire_groups(tree: list, include_ground: bool = False) -> list[dict]:
+    """The wire groups connected to a power symbol (power port), ground nets
+    left out unless `include_ground`."""
+    out = []
+    for g in wire_groups(tree):
+        power = {n for n in g["power_nets"] if include_ground or not GROUND_NETS.match(n)}
+        if power:
+            out.append({**g, "power_nets": power})
+    return out
+
+
+def color_power_wires(tree: list, color: str | tuple = "red", include_ground: bool = False) -> dict:
+    """Colour every wire connected to a power symbol (power port), e.g. the
+    VBUS, +5V or +3V3 rails. Ground nets are left alone unless `include_ground`.
+    Wires that had this colour but are no longer on a power net get the
+    default colour back."""
+    rgb = _rgb(color)
+    power_ids = set()
+    nets: set[str] = set()
+    for g in power_wire_groups(tree, include_ground):
+        power_ids.update(id(w) for w in g["wires"])
+        nets |= g["power_nets"]
+    for w in (c for c in tree[1:] if is_call(c, "wire")):
+        if id(w) in power_ids:
+            set_wire_color(w, rgb)
+        elif wire_color(w) == rgb:
+            set_wire_color(w, None)
+    return {"colored_wires": len(power_ids), "nets": sorted(nets)}
+
+
+# --------------------------------------------------------------------------- #
+# Functional blocks (dashed rectangles with a title)
+# --------------------------------------------------------------------------- #
+
+BLOCK_TITLE_SCALE = 2.0  # block titles: twice the field text size, bold
+BLOCK_TITLE_INSET_MM = 1.27
+
+
+def iter_blocks(tree: list):
+    """(title, (x0, y0, x1, y1) in file coords) of each block rectangle; the
+    title is the text in its top-left corner, if any."""
+    texts = [(str(c[1]), _xy(find_child(c, "at"))) for c in tree[1:] if is_call(c, "text") and len(c) >= 2]
+    for c in tree[1:]:
+        if not is_call(c, "rectangle"):
+            continue
+        s, e = _xy(find_child(c, "start")), _xy(find_child(c, "end"))
+        if not s or not e:
+            continue
+        box = (min(s[0], e[0]), min(s[1], e[1]), max(s[0], e[0]), max(s[1], e[1]))
+        title = next((t for t, at in texts
+                      if at and _same(at, (box[0] + BLOCK_TITLE_INSET_MM, box[1] + BLOCK_TITLE_INSET_MM))), "")
+        yield title, box
+
+
+def add_block(
+    tree: list, title: str, x_mm: float, y_mm: float, width_mm: float, height_mm: float,
+    text_size: float = FIELD_TEXT_MM,
+) -> dict:
+    """Frame a functional block: a dashed rectangle with `title` (bold) in its
+    top-left corner. (x_mm, y_mm) is the bottom-left corner in MCP coords. The
+    corners must be on the 100 mil grid and inside the frame; a block that
+    overlaps another one is refused."""
+    if width_mm <= 0 or height_mm <= 0:
+        raise ValueError("width and height must be positive")
+    page_h = page_height_mm(tree)
+    x0, y1 = mcp_to_kicad_xy(x_mm, y_mm, page_h)                         # bottom-left
+    x1, y0 = mcp_to_kicad_xy(x_mm + width_mm, y_mm + height_mm, page_h)  # top-right
+    x0, y0, x1, y1 = (round_mm(v) for v in (x0, y0, x1, y1))
+    for px, py, what in ((x0, y1, "bottom-left corner"), (x1, y0, "top-right corner")):
+        require_inside_frame(tree, px, py, f"block {title!r} {what}")
+        require_on_grid(px, py, f"block {title!r} {what}", page_h)
+    for other, (a0, b0, a1, b1) in iter_blocks(tree):
+        if x0 <= a1 and a0 <= x1 and y0 <= b1 and b0 <= y1:
+            raise ValueError(f"block {title!r} overlaps or touches block {other!r}")
+    size = round(text_size * BLOCK_TITLE_SCALE, 4)
+    tree.append([
+        sym("rectangle"),
+        [sym("start"), x0, y0],
+        [sym("end"), x1, y1],
+        [sym("stroke"), [sym("width"), 0], [sym("type"), sym("dash")]],
+        [sym("fill"), [sym("type"), sym("none")]],
+        [sym("uuid"), str(uuid.uuid4())],
+    ])
+    tree.append([
+        sym("text"), title,
+        [sym("exclude_from_sim"), sym("no")],
+        [sym("at"), round_mm(x0 + BLOCK_TITLE_INSET_MM), round_mm(y0 + BLOCK_TITLE_INSET_MM), 0],
+        [sym("effects"),
+         [sym("font"), [sym("size"), size, size], [sym("thickness"), round(size / 5, 4)], [sym("bold"), sym("yes")]],
+         [sym("justify"), sym("left"), sym("top")]],
+        [sym("uuid"), str(uuid.uuid4())],
+    ])
+    return {"title": title, "x_mm": x_mm, "y_mm": y_mm, "width_mm": width_mm, "height_mm": height_mm}
 
 
 # --------------------------------------------------------------------------- #
