@@ -325,12 +325,30 @@ def register(mcp) -> None:
         return result
 
     @mcp.tool()
+    def get_sheet_layout() -> dict:
+        """The active sheet's drawing frame and title block, as MCP boxes
+        {x0, y0, x1, y1} (mm, Y up), for laying out functional blocks."""
+        tree, _ = _load_active_schematic()
+        page_h = ed.page_height_mm(tree)
+
+        def mcp_box(b):
+            x0, y0, x1, y1 = b
+            return {"x0": ed.round_mm(x0), "y0": ed.round_mm(page_h - y1),
+                    "x1": ed.round_mm(x1), "y1": ed.round_mm(page_h - y0)}
+
+        layout = ed.sheet_layout(tree)
+        return {"page_mm": list(ed.page_size_mm(tree)),
+                "frame": mcp_box(layout["frame"]), "title_block": mcp_box(layout["title_block"])}
+
+    @mcp.tool()
     def add_block(title: str, x_mm: float, y_mm: float, width_mm: float, height_mm: float) -> dict:
         """Frame a functional block (e.g. "USB PD controller", "3V3 DC/DC"):
         a dashed rectangle with its title in bold in the top-left corner.
 
-        (x_mm, y_mm) is the bottom-left corner (MCP coords); corners on the
-        100 mil grid, inside the frame. Blocks must not overlap. Keep each
+        (x_mm, y_mm) is the bottom-left corner (MCP coords), inside the frame;
+        corners need not be on the grid. Blocks must not overlap. Tile them
+        with one equal gap between neighbouring blocks and between blocks and
+        the frame or title block (get_sheet_layout gives both). Keep each
         block's symbols, wires and text inside it, with room below the title;
         connect blocks with net labels, not wires.
         """

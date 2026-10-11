@@ -103,6 +103,22 @@ def page_height_mm(tree: list) -> float:
     return round_mm(int(h / SCH_GRID_MM) * SCH_GRID_MM)
 
 
+# KiCAD's default title block, anchored at the frame's bottom-right corner.
+TITLE_BLOCK_W_MM = 110.0
+TITLE_BLOCK_H_MM = 34.0
+
+
+def sheet_layout(tree: list) -> dict:
+    """The drawing frame and the title block as (x0, y0, x1, y1) boxes in
+    KiCAD file coords (Y down)."""
+    w, h = page_size_mm(tree)
+    m = SHEET_FRAME_MARGIN_MM
+    return {
+        "frame": (m, m, w - m, h - m),
+        "title_block": (w - m - TITLE_BLOCK_W_MM, h - m - TITLE_BLOCK_H_MM, w - m, h - m),
+    }
+
+
 def require_inside_frame(tree: list, x_k: float, y_k: float, what: str) -> None:
     """Refuse a point (KiCAD coords) that falls outside the drawing-sheet frame."""
     w, h = page_size_mm(tree)
@@ -1233,8 +1249,9 @@ def add_block(
 ) -> dict:
     """Frame a functional block: a dashed rectangle with `title` (bold) in its
     top-left corner. (x_mm, y_mm) is the bottom-left corner in MCP coords. The
-    corners must be on the 100 mil grid and inside the frame; a block that
-    overlaps another one is refused."""
+    corners must be inside the frame; they need not be on the grid (a block is
+    only a drawing), so blocks can keep equal gaps to each other and to the
+    frame. A block that overlaps another one is refused."""
     if width_mm <= 0 or height_mm <= 0:
         raise ValueError("width and height must be positive")
     page_h = page_height_mm(tree)
@@ -1243,7 +1260,6 @@ def add_block(
     x0, y0, x1, y1 = (round_mm(v) for v in (x0, y0, x1, y1))
     for px, py, what in ((x0, y1, "bottom-left corner"), (x1, y0, "top-right corner")):
         require_inside_frame(tree, px, py, f"block {title!r} {what}")
-        require_on_grid(px, py, f"block {title!r} {what}", page_h)
     for other, (a0, b0, a1, b1) in iter_blocks(tree):
         if x0 <= a1 and a0 <= x1 and y0 <= b1 and b0 <= y1:
             raise ValueError(f"block {title!r} overlaps or touches block {other!r}")

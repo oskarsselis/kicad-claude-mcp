@@ -350,8 +350,26 @@ def test_add_block_draws_dashed_rectangle_with_title_and_refuses_overlap(tree):
     with pytest.raises(ValueError, match="overlaps"):
         ed.add_block(tree, "Other", 101.6, 127.0, 50.8, 50.8)
     ed.add_block(tree, "Other", 132.08, 101.6, 25.4, 25.4)        # beside it: fine
+    ed.add_block(tree, "Off grid", 15.0, 101.6, 25.4, 25.4)        # corners may be off grid
     with pytest.raises(ValueError):
-        ed.add_block(tree, "Off grid", 10.0, 101.6, 25.4, 25.4)
+        ed.add_block(tree, "Outside", 5.0, 50.8, 5.0, 25.4)         # left of the frame
+
+
+def test_block_spacing_wants_one_gap_to_blocks_frame_and_title_block(tree):
+    from kicad_claude.adapters import sch_verify
+
+    # A4: frame x 10..287, y 8.28..198.28; title block x 177..287, y 8.28..42.28 (MCP)
+    ed.add_block(tree, "A", 15.0, 13.28, 157.0, 180.0)
+    ed.add_block(tree, "B", 177.0, 47.28, 105.0, 146.0)
+    gaps = sch_verify.block_gaps(tree)
+    assert {v for g in gaps for k, v in g.items() if k != "block"} == {5.0}
+    assert not sch_verify.style_issues(tree)["block_spacing"]
+    rect = [c for c in tree if sch_io.is_call(c, "rectangle")][1]
+    sch_io.find_child(rect, "start")[2] = 13.0                      # B's top: 3 mm from the frame
+    title = next(c for c in tree if sch_io.is_call(c, "text") and c[1] == "B")
+    sch_io.find_child(title, "at")[2] = 13.0 + ed.BLOCK_TITLE_INSET_MM
+    issues = sch_verify.style_issues(tree)["block_spacing"]
+    assert [e["block"] for e in issues] == ["B"] and issues[0]["top"] == 3.0
 
 
 def test_color_power_wires_colours_only_wires_on_power_nets(tree):

@@ -31,9 +31,9 @@ import sexpdata
 from kicad_claude.adapters import kicad_cli, sch_editor as ed, sch_io
 from kicad_claude.adapters.sch_io import find_child, find_children, head_of, is_call
 
-# KiCAD's default title block, anchored at the frame's bottom-right corner.
-TITLE_BLOCK_W_MM = 110.0
-TITLE_BLOCK_H_MM = 34.0
+TITLE_BLOCK_W_MM = ed.TITLE_BLOCK_W_MM
+TITLE_BLOCK_H_MM = ed.TITLE_BLOCK_H_MM
+BLOCK_GAP_TOLERANCE_MM = 0.1
 
 
 # --------------------------------------------------------------------------- #
@@ -374,6 +374,8 @@ def style_issues(tree: list) -> dict[str, list[dict]]:
     """Drawing-style checks that need only the schematic file.
 
     - blocks_overlapping: functional blocks (rectangles) overlapping each other
+    - block_spacing: blocks whose gaps to their neighbours, the title block
+      and the frame are not all equal
     - crossing_blocks: wires or symbols crossing a block border (connect
       blocks with labels; keep each part inside its block)
     - long_wires: connected wires spanning more than a quarter of the sheet
@@ -454,6 +456,7 @@ def style_issues(tree: list) -> dict[str, list[dict]]:
                 layout.append({"reference": ref})
     return {
         "blocks_overlapping": overlapping,
+        "block_spacing": block_spacing_issues(tree),
         "crossing_blocks": crossing,
         "long_wires": long_wires,
         "uncolored_power_wires": uncolored,
@@ -461,6 +464,39 @@ def style_issues(tree: list) -> dict[str, list[dict]]:
         "long_values": long_values,
         "ref_value_layout": layout,
     }
+
+
+def block_gaps(tree: list) -> list[dict]:
+    """For each block side, the gap to whatever it faces: another block, the
+    title block or the drawing frame (file coords)."""
+    layout = ed.sheet_layout(tree)
+    fx0, fy0, fx1, fy1 = layout["frame"]
+    blocks = list(ed.iter_blocks(tree))
+    out = []
+    for i, (title, (x0, y0, x1, y1)) in enumerate(blocks):
+        others = [b for k, (_, b) in enumerate(blocks) if k != i] + [layout["title_block"]]
+        across_y = [o for o in others if o[1] < y1 and y0 < o[3]]   # beside it (left/right)
+        across_x = [o for o in others if o[0] < x1 and x0 < o[2]]   # above/below it
+        gaps = {
+            "left": min([x0 - fx0] + [x0 - o[2] for o in across_y if o[2] <= x0 + 1e-6]),
+            "right": min([fx1 - x1] + [o[0] - x1 for o in across_y if o[0] >= x1 - 1e-6]),
+            "top": min([y0 - fy0] + [y0 - o[3] for o in across_x if o[3] <= y0 + 1e-6]),
+            "bottom": min([fy1 - y1] + [o[1] - y1 for o in across_x if o[1] >= y1 - 1e-6]),
+        }
+        out.append({"block": title, **{k: round(v, 3) for k, v in gaps.items()}})
+    return out
+
+
+def block_spacing_issues(tree: list) -> list[dict]:
+    """Blocks whose gaps (to each other, the title block and the frame) are
+    not all the same."""
+    gaps = block_gaps(tree)
+    values = [g[s] for g in gaps for s in ("left", "right", "top", "bottom")]
+    if not values or max(values) - min(values) <= BLOCK_GAP_TOLERANCE_MM:
+        return []
+    target = sorted(values)[len(values) // 2]
+    return [g for g in gaps
+            if any(abs(g[s] - target) > BLOCK_GAP_TOLERANCE_MM for s in ("left", "right", "top", "bottom"))]
 
 
 def text_crossing_blocks(svg: str, tree: list, flip_h: float) -> list[dict]:
@@ -647,6 +683,11 @@ def verify(project_dir: Path, project_name: str, *, timeout: float = 120.0) -> d
     if style["blocks_overlapping"]:
         items = ", ".join(" / ".join(e["blocks"]) for e in style["blocks_overlapping"][:8])
         problems.append(f"overlapping blocks: {items}")
+    if style["block_spacing"]:
+        items = ", ".join(
+            f"{e['block']} (L {e['left']}, R {e['right']}, T {e['top']}, B {e['bottom']} mm)"
+            for e in style["block_spacing"][:6])
+        problems.append("blocks without equal gaps to each other, the title block and the frame: " + items)
     if style["crossing_blocks"]:
         items = ", ".join(sorted({f"{e['item']} ({e['block']})" for e in style["crossing_blocks"]})[:8])
         problems.append(f"{len(style['crossing_blocks'])} wire(s)/symbol(s) across a block border "
