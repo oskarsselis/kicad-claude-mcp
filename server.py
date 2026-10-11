@@ -82,6 +82,15 @@ mm): keep it clear. Put the circuit in the upper/middle part of the page.
 Projects: one folder per project, e.g. create_project(path="<parent>/<name>",
 name="<name>").
 
+Functional blocks:
+- Put each functional block (e.g. "USB PD controller", "Level shifter",
+  "3V3 DC/DC") in a dashed rectangle with its title in the top-left corner
+  (add_block). Blocks must not overlap; keep each block's symbols, wires and
+  text inside it, below the title. Place related blocks next to each other
+  (e.g. a regulator directly below the circuit it feeds).
+- Connect blocks with net labels and power symbols, never with wires across
+  a block border.
+
 Grid and placement (the tools refuse off-grid and off-frame input and suggest
 a valid position; plan for it instead of trial and error):
 - Every connection point (pin end, wire end, label, junction) is on the
@@ -95,11 +104,16 @@ a valid position; plan for it instead of trial and error):
 
 Symbols:
 - Resistors: Device:R_Small. Capacitors: Device:C_Small.
-- Capacitors: Value holds only the capacitance ("10 µF"); put the voltage
-  rating in a "Voltage" field shown on the line below the value
-  (show_fields=["Voltage"]) and the dielectric in a hidden "Dielectric" field.
-- ICs show their MPN instead of the value (fields={"MPN": ...},
-  display_field="MPN").
+- Value field: the short value only ("10µF", "5.1kΩ", "5mΩ"), never a
+  description such as "TVS, 22 V standoff" or "N-MOSFET, 50 V". Keep the full
+  text in the hidden Description (add_symbol(description=...)).
+- ICs, MOSFETs, TVS diodes and LEDs: the part number is the value (and in the
+  MPN field).
+- Secondary information worth seeing (a capacitor's voltage, a resistor's
+  tolerance or power, an inductor's saturation current) goes in its own field
+  shown below the value (show_fields): it is drawn smaller and grey. Other
+  details (dielectric, ...) stay in hidden fields.
+- Capacitors: Value = capacitance, "Voltage" field shown, "Dielectric" hidden.
 - Power symbols for supply rails (GND, +3V3, VBUS, ...): GND symbols face
   down with the "GND" text hidden (hide_value=True); supply symbols face up.
   A rail without its own library symbol uses a similar one with the net as
@@ -115,7 +129,18 @@ Symbols:
 Wiring and labels:
 - Connect each supporting part (resistors, capacitors, LEDs, diodes,
   transistors) to the IC pin it serves with a wire; put the net label on that
-  wire. Connections between functional blocks may use labels alone.
+  wire. Connections between functional blocks use labels alone.
+- Decoupling capacitors sit vertically right at the pin they serve, each with
+  its own ground symbol. Pull-ups, pull-downs and gate resistors sit next to
+  the part they belong to.
+- No wire run longer than a quarter of the sheet width (A4: 74 mm, A3: 105
+  mm): for longer connections put a net label at both ends instead.
+- Net names are functional and prefixed by their block, e.g. PD_SCL, PD_SDA,
+  PD_OTP, DCDC_FB (unless the source data fixes the names).
+- Power wires are red: after wiring, call color_power_wires (colours every
+  wire connected to a power symbol; ground stays default).
+- Test points sit on the wire of the net they probe, in the circuit next to
+  the part it concerns (e.g. VBUS at the sense resistor); no lone test points.
 - A label's text must lie along its own wire: make the wire at least as long
   as the text and, at a stub's free end, point the label back towards the
   pin. Text sticking out past a wire end looks like it hangs off the tip.
@@ -128,7 +153,9 @@ Text and spacing:
   Schematic Setup, 50 mil unless changed); set_schematic_text_size changes it
   for symbols placed afterwards.
 - Reference and value are placed automatically beside each symbol, on the
-  side without pins; text_side overrides it (e.g. for long values).
+  side without pins, Reference above Value. Keep this default so text sits
+  in the same place relative to every symbol; avoid text_side.
+- Text must not overlap wires, symbols or other text.
 - KiCad treats a symbol as one rectangle around its body, pins and visible
   text, so the empty area under a long value still belongs to it: keep other
   symbols out of that rectangle, or they are plotted as overlapping.
@@ -138,7 +165,8 @@ Text and spacing:
 Finishing: after changing a schematic, call verify_schematic. Only report the
 schematic as done when `ok` is true; otherwise fix every item in `problems`
 (overlapping text, text on wires, wires through symbols, labels off their
-wire, crowding, grid and frame). Compare `nets` with the intended circuit,
+wire, crowding, grid and frame, blocks, long wires, uncoloured power wires,
+lone test points, long values, Reference/Value layout). Compare `nets` with the intended circuit,
 and open the PDF it returns and look at it: the checks cannot judge
 readability or whether the circuit does what was asked. Report ERC results
 exactly as returned.

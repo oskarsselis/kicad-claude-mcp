@@ -5,8 +5,8 @@ They apply to every project unless the project asks otherwise. Choices for a
 single board (footprints, fab, ERC exceptions) belong in that project's own
 notes.
 
-The schematic rules are also sent to every MCP client in the server's
-instructions (`server.py`).
+These rules are also sent to every MCP client in the server's instructions
+(`server.py`), and `verify_schematic` checks the ones it can.
 
 ## General
 
@@ -24,13 +24,32 @@ instructions (`server.py`).
 - Everything stays inside the drawing frame and clear of the title block.
 - One folder per project.
 
+### Functional blocks
+
+- Each functional block (e.g. "USB PD controller", "Level shifter",
+  "3V3 DC/DC") sits in a dashed rectangle with its title in the top-left
+  corner (`add_block`).
+- Blocks must not overlap. Each block's symbols, wires and text stay inside
+  it, below the title.
+- Related blocks sit next to each other, e.g. a regulator directly below the
+  circuit it feeds.
+- Blocks connect by net labels and power symbols, never by wires crossing a
+  block border.
+
 ### Symbols
 
 - Resistors: `Device:R_Small`. Capacitors: `Device:C_Small`.
-- Capacitors: Value holds only the capacitance. The voltage rating goes in a
-  `Voltage` field shown on the line below. The dielectric goes in a hidden
-  `Dielectric` field.
-- ICs show their MPN instead of the value.
+- Value field: the short value only (10µF, 5.1kΩ, 5mΩ). No descriptions
+  such as "TVS, 22 V standoff, 28.35 V clamp" or "N-MOSFET, 50 V". The full
+  source text goes in the hidden Description field.
+- ICs, MOSFETs, TVS diodes and LEDs: the part number is the value, placed
+  next to the part like any value.
+- Secondary information worth seeing goes in its own field, shown on the
+  line below the value, smaller than the value and grey. For example a
+  capacitor's voltage, a resistor's tolerance or power, an inductor's
+  saturation current.
+- Capacitors: Value = capacitance, `Voltage` field shown, `Dielectric`
+  hidden.
 - Supply rails use power symbols, including connector rails such as VBUS. A
   rail without its own library symbol uses a similar one with the net as its
   value.
@@ -41,8 +60,9 @@ instructions (`server.py`).
 
 ### Text
 
-- Reference and value sit on two separate lines. They must not overlap each
-  other, the symbol or wires.
+- Reference and value sit on two separate lines, Reference above Value, in
+  the same position relative to every symbol (the side without pins).
+- Text must not overlap wires, symbols or other text.
 - Text size follows the project's default text size (Schematic Setup).
 - KiCad treats a symbol as one rectangle around its body, pins and text.
   Keep other symbols out of that rectangle, or they print as overlapping.
@@ -51,7 +71,19 @@ instructions (`server.py`).
 
 - Wire each supporting part (resistor, capacitor, LED, diode, transistor)
   to the IC pin it serves, and put the net label on that wire.
-- Functional blocks connect to each other by labels.
+- Decoupling capacitors sit vertically, directly at the pin they serve, each
+  with its own ground symbol.
+- Pull-ups, pull-downs and gate resistors sit next to the part they belong
+  to.
+- No wire run is longer than a quarter of the sheet width (A4: 74 mm, A3:
+  105 mm). Longer connections get a net label at both ends instead.
+- Net names are functional and prefixed by their block, e.g. PD_SCL,
+  PD_SDA, PD_OTP (unless the source data fixes the names).
+- Wires connected to power symbols (power ports) are red
+  (`color_power_wires`); ground wires keep the default colour.
+- Test points sit in the circuit, on the wire of the net they probe, next to
+  the part concerned (e.g. VBUS at the sense resistor, VOUT, 5V, 1V8). No
+  lone test points.
 - A label's text lies along its own wire: the wire is at least as long as
   the text, and at a stub's free end the label points back towards the pin.
 - Wires may cross, but a crossing never joins two nets.
