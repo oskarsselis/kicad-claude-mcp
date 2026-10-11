@@ -279,6 +279,23 @@ on):
 5.6 Thermal vias under exposed pads (unless the footprint has them) and hot
     parts' power pads; ask the fab to tent or plug via-in-pad.
 
+6. Pours and thermal:
+6.1 GND pours on both outer layers, below the power pours (clearance a bit
+    above minimum, minimum fill width, islands removed); thermal reliefs on
+    pads, solid on exposed/thermal pads; stitching vias on a ~2.5 mm grid
+    outside courtyards and labels, each landing in an outer pour.
+6.2 Copper >= 0.3 mm from the board edge (board rule, routed with it) unless
+    an edge pour is deliberate.
+7. Silkscreen and manufacturing:
+7.1 Pin 1 / polarity marks on every polarised part (check the render);
+    connector labels and pin names (on the back where the connector body
+    covers the front).
+7.2 Every test point labelled with its net, nearer its own test point than
+    any other.
+    Text >= the fab minimum (PCBWay 0.8 mm / 0.15 mm), clear of pads, vias,
+    other silkscreen, part bodies and the edge; labels before stitching vias,
+    connectors' labels first.
+
 PCB checks: run_drc with 0 errors and every warning explained; render the
 board and look at it; report decoupling pad-to-pin distances, power path
 and differential pair lengths.

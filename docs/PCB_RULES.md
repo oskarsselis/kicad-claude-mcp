@@ -295,6 +295,52 @@ Track geometry, for every stage:
   under hot parts' power pads (MOSFET drains) to copper on the other side.
 - Via-in-pad: ask the fab to tent or plug them, so solder doesn't wick away.
 
+## 6. Pours and thermal
+
+### 6.1 GND pours on the outer layers
+
+- Pour GND on both outer layers over the whole board, at a lower priority
+  than the power pours, so it fills what's left. Keep a little more than the
+  minimum clearance (e.g. 0.2 mm) and a minimum fill width (e.g. 0.25 mm)
+  so no slivers remain; remove islands.
+- Pads join the pour through thermal reliefs (easier soldering, no
+  tombstoning of small parts); exposed and thermal pads join solid.
+- Tie the outer pours to the GND planes with stitching vias on a regular
+  grid (e.g. 2.5 mm) wherever a via fits, outside part courtyards and
+  silkscreen labels; drop any stitching via that doesn't land in an outer
+  pour.
+
+### 6.2 Board edge
+
+- Keep copper at least 0.3 mm from the board edge (set it as the board's
+  copper-to-edge rule, and route with it), unless a pour or plating to the
+  edge is deliberate (e.g. edge plating, castellations).
+
+## 7. Silkscreen and manufacturing
+
+### 7.1 Marks and labels
+
+- Check that every polarised or orientable part shows its mark: pin 1 on
+  ICs, transistors and connectors, cathode on diodes and LEDs, + on
+  polarised capacitors. Footprints usually carry them; check the render.
+- Label connectors: what they are (e.g. "USB-C") and their pins (e.g.
+  "VOUT +" / "GND -" at a terminal). Where a connector's body covers the
+  front (box headers), put the pin names on the back, next to the pins.
+
+### 7.2 Test points
+
+- Label every test point with its net, close enough that each label is
+  nearer its own test point than any other.
+
+### Silkscreen placement
+
+- Text at least the fab's minimum (e.g. PCBWay 0.8 mm high, 0.15 mm
+  stroke), clear of pads and holes (about 0.15 mm), vias, other silkscreen,
+  part bodies (courtyards; a test point's courtyard is only its pad) and the
+  board edge.
+- Place the labels before the stitching vias, so the vias keep clear of
+  them; place the labels with the fewest options (connectors) first.
+
 ## Checks
 
 - DRC with schematic parity: 0 errors. Explain every remaining warning.
