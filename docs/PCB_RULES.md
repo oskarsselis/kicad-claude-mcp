@@ -213,6 +213,88 @@ board by much.
 - Test a new rule once on a copy of the board (e.g. a track 0.05 mm too
   close) so it is known to fire.
 
+## 5. Route, in this order
+
+Run DRC after each stage and look at every copper layer before moving on.
+
+Track geometry, for every stage:
+
+- Tracks change direction in 45-degree steps; avoid 90-degree corners (use
+  a 45-degree chamfer instead). Other angles only for RF/antenna lines.
+- Make the 45-degree cut long enough to read as one, not as a clipped 90:
+  aim for 0.5–0.8 mm per leg (several track widths), shorter only where pads
+  or other copper leave no room. Autorouters on a fine grid tend to cut
+  corners by a single grid step; widen those.
+- Long runs between groups go horizontal and vertical, with 45-degree
+  corners; 45-degree segments are for short jogs and corners.
+- Tracks end at pad centres.
+- Vias never touch pads: keep a solder-mask dam between via and pad (via
+  ring at least 0.15 mm from the pad edge; the fab minimum mask web is
+  0.1 mm), joined by a short stub from the pad centre. Via-in-pad only for
+  thermal vias in exposed or power pads, tented or plugged.
+- Parts may move a little to make room for clean routing, and two parts
+  may swap places when that removes a crossing (nets unchanged; re-check DRC
+  and the placement rules after moving them).
+- A signal track must not cut a high-current pour in two (e.g. a gate track
+  across a MOSFET pair's common-source pour): route it around the pour.
+
+### 5.1 High-current power paths
+
+- Route high-current paths with pours (or wide traces where a pour doesn't
+  fit), solidly connected to their pads. Copy the pour on the other outer
+  layer and stitch both with vias to double the copper and spread heat.
+- Sense connections (e.g. to a current-sense resistor) are thin Kelvin
+  traces from the resistor's own pads, not taps on the pour.
+- Draw pour outlines along the path only, so they don't block other routing;
+  the fill keeps clearance from other nets by itself.
+
+### 5.2 GND
+
+- The GND layers are solid planes over the whole board.
+- Every GND pin connects directly to the GND layer through its own via, on a
+  short stub from the pad centre with a solder-mask dam between pad and via
+  (no via touching the pad). No GND tracks between parts. Where no via fits,
+  a connector's GND contact may join the connector's own GND/shield pad.
+- Place the GND vias before the remaining routing, so later traces go
+  around them. A GND via may sit inside another net's pour; the pour keeps
+  clear of it.
+
+### 5.3 High-speed and differential pairs
+
+- Matched, short, no vias where they can be avoided, no stubs; keep the
+  pair's width and gap from its net class all the way, with symmetric 45°
+  bends (the inner line turns earlier so the gap stays constant).
+- At a connector with a fixed pin pitch, neck the pair down right at the
+  pads; exempt the breakout inside the connector's courtyard from the gap
+  rule.
+- USB-C has two contacts per line: join them on the same layer without
+  vias where possible (e.g. one line loops around the inner end of the
+  contact between, the other joins past the free end of the next one), with
+  the shortest stubs. If vias are unavoidable, give both lines the same
+  topology, since KiCad counts via barrels in the net length.
+
+### 5.4 Switching converter nets
+
+- SW short and wide straight to the inductor, bootstrap capacitor right at
+  its pins, input capacitor on VIN/GND, output capacitor at the inductor.
+- Feedback, soft-start, frequency and bias nets short and away from SW.
+
+### 5.5 Remaining signals
+
+- Route everything else (by hand or with the autorouter around the copper
+  already placed), at the net class widths.
+- Short local connections with one natural path (sense, enable and gate
+  lines, strap and LED resistors) first, longer nets around them. Pins
+  walled in by other nets on both outer layers get their vias planned by
+  hand (smaller vias, e.g. 0.5/0.2 mm, where 0.6/0.3 doesn't fit).
+
+### 5.6 Thermal vias
+
+- Put thermal vias under exposed pads unless the footprint has them (e.g.
+  0.3 mm drill / 0.6 mm pad at about 0.9 mm pitch, connected solidly), and
+  under hot parts' power pads (MOSFET drains) to copper on the other side.
+- Via-in-pad: ask the fab to tent or plug them, so solder doesn't wick away.
+
 ## Checks
 
 - DRC with schematic parity: 0 errors. Explain every remaining warning.

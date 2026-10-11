@@ -249,6 +249,36 @@ on):
     and pours between the HV nets and all others; pads of different parts at
     least the pad value apart. Test a new rule once on a board copy.
 
+5. Route, in this order (DRC and a look at each copper layer after each stage).
+   Always: 45-degree direction changes, no 90-degree corners (other angles
+   only for RF/antenna), with corner cuts long enough to read as 45 degrees
+   (0.5-0.8 mm per leg, shorter only where there's no room); long runs
+   between groups horizontal/vertical with 45-degree corners; tracks end at
+   pad centres; vias never touch pads (short stub from the pad centre, via
+   ring >= 0.15 mm from the pad edge; via-in-pad only for thermal vias,
+   tented/plugged); parts may move a little, or swap places, to make room;
+   no signal track cuts a high-current pour in two.
+5.1 High-current paths: pours (or wide traces), solid pad connections,
+    copied on the other outer layer with stitching vias; sense lines as thin
+    Kelvin traces from the sense resistor's own pads.
+5.2 GND: solid GND planes; every GND pin gets its own via on a short stub
+    with a mask dam; no GND tracks between parts (a connector's GND contact
+    may join its own shield pad where no via fits). Place GND vias before the
+    remaining routing.
+5.3 High-speed and differential pairs: matched, short, no vias where
+    avoidable, no stubs, symmetric 45-degree bends; neck down at connector
+    pads (exempt that breakout from the gap rule); join USB-C's double
+    contacts on one layer without vias where possible (else the same
+    topology on both lines: KiCad counts via barrels in net length).
+5.4 Switching converter nets: SW short and wide, bootstrap cap at its pins,
+    feedback and bias nets short and away from SW.
+5.5 Remaining signals (by hand or autorouter around the placed copper):
+    short local connections with one natural path first (sense, enable,
+    gate, strap/LED resistors), longer nets around them; plan vias by hand
+    for pins walled in on both outer layers.
+5.6 Thermal vias under exposed pads (unless the footprint has them) and hot
+    parts' power pads; ask the fab to tent or plug via-in-pad.
+
 PCB checks: run_drc with 0 errors and every warning explained; render the
 board and look at it; report decoupling pad-to-pin distances, power path
 and differential pair lengths.
