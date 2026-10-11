@@ -217,18 +217,26 @@ on):
     (calculate_differential_impedance), DRC rules for width, gap, uncoupled
     length, skew and length (add_drc_rule). USB 2.0: 90 ohm, skew <= 1.27 mm.
 
-PCB placement:
-- Group related parts.
-- Decoupling capacitors and all supporting parts as close as possible to the
-  IC pins they serve, the connecting pad facing the pin.
-- Rotate ICs so high-speed or differential pins face their connector; keep
-  the lane between them clear.
-- Power paths short and straight (connector, sense resistor, switches,
-  output connector), parts oriented along the path, no part of another net
-  on it. Signal circuits (e.g. level shifters) near the connector they serve,
-  out of the power path. Sensors next to what they monitor.
-- Make the board as compact as possible within these rules, and report what
-  else would shrink it.
+3. Place order (each group goes where the ones before leave room)
+3.1 Connectors, mounting holes, mechanical parts (fixed in 1.4).
+3.2 Protection parts (TVS, fuses, ESD) right at the connector they protect,
+    pads facing its pins.
+3.3 Main power path in a straight line from input to output where possible
+    (connector, protection, sense resistor, switches, output connector),
+    parts oriented along it, no part of another net on it.
+3.4 Main ICs near the connector or signal source they depend on most;
+    high-speed/differential pins facing their connector, lane kept clear.
+3.5 Power converters with their inductor and capacitors as one tight group,
+    placed as a unit: input cap at VIN with its ground next to the IC ground,
+    inductor at SW, output cap at the inductor with its ground facing the IC
+    ground; small switching loops.
+3.6 Supporting parts (pull-ups, dividers, level shifters, decoupling) next
+    to the pin or part they serve, connecting pad facing the pin; signal
+    circuits near their connector, out of the power path.
+3.7 Temperature sensors near the heat source, away from other heat sources.
+3.8 Other parts (test points, LEDs, ...) next to what they belong to. Keep
+    the board as compact as these rules allow; report what else would
+    shrink it.
 
 PCB checks: run_drc with 0 errors and every warning explained; render the
 board and look at it; report decoupling pad-to-pin distances, power path

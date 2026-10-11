@@ -113,21 +113,67 @@ Set every rule before placing or routing. Don't route or pour in this step.
 - The impedance formulas are approximations: confirm critical impedances
   with the fab's calculator before ordering.
 
-## Placement
+## 3. Place order
 
-- Group related parts.
-- Decoupling capacitors and all supporting parts sit as close as possible
-  to the IC pins they serve, with the connecting pad facing the pin.
+Place the parts in this order; each group goes where the ones before it
+leave room.
+
+### 3.1 Connectors, mounting holes, mechanical parts
+
+- These are fixed in step 1.4: connectors on the board edges, opening
+  outwards; mounting holes (M3 by default) where the project wants them.
+
+### 3.2 Protection parts
+
+- TVS diodes, fuses and ESD parts sit right at the connector they protect,
+  between the connector and the rest of the circuit, with their pads facing
+  the connector pins.
+
+### 3.3 Main power path
+
+- Keep the main power path in a straight line from input to output where
+  possible: connector → protection → sense resistor → switches → output
+  connector. Orient parts so their pads face along the path.
+- No part of another net may sit on the power path.
+
+### 3.4 Main ICs
+
+- Place each main IC near the connector or signal source it depends on most.
 - Rotate ICs so high-speed or differential pins face their connector, and
   keep the lane between them clear.
-- Power paths are short and straight: connector → sense resistor → switches
-  → output connector. Orient parts so their pads face along the path.
-- No part of another net may sit on a power path.
-- Keep signal circuits, such as level shifters, near the connector they
-  serve and out of the power path.
-- Put sensors such as thermistors next to the parts they monitor.
-- Make the board as compact as possible within the rules above, and report
-  what else would shrink it (for example moving a connector).
+
+### 3.5 Power converters
+
+- A converter, its inductor and its capacitors form one tight group, placed
+  and moved as a unit:
+  - input capacitor right at VIN, its ground pad next to the converter's
+    ground (exposed pad);
+  - inductor right at SW;
+  - output capacitor at the inductor's output, its ground pad facing the
+    converter's ground;
+  - bootstrap, soft-start, frequency and feedback parts at their pins.
+- Keep the switching loops (input capacitor - IC - ground, SW - inductor -
+  output capacitor - ground) as small as possible.
+
+### 3.6 Supporting parts
+
+- Pull-ups, pull-downs, dividers, level shifters and decoupling capacitors
+  sit next to the pin or part they serve; decoupling capacitors as close as
+  possible, with the connecting pad facing the pin.
+- Level shifters and other signal circuits sit near the connector they
+  serve, out of the power path.
+
+### 3.7 Temperature sensors
+
+- Place temperature sensors near the heat source they monitor, away from
+  other heat sources.
+
+### 3.8 Other
+
+- Test points, LEDs and the remaining parts: next to the net or part they
+  belong to.
+- Group related parts, and make the board as compact as these rules allow.
+  Report what else would shrink it (for example moving a connector).
 
 ## Checks
 
