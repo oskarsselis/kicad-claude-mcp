@@ -238,6 +238,17 @@ on):
     the board as compact as these rules allow; report what else would
     shrink it.
 
+4. Placement rules (check on the placed board; don't grow the board much)
+4.1 Decoupling caps at the pin they serve, smallest value closest, room for
+    a short GND via right at each ground pad.
+4.2 Switching loops (input cap - switch - GND; SW - inductor - output cap -
+    GND) as small as possible; report their areas.
+4.3 Separate high-voltage nets from low-voltage logic by IPC-2221B spacing
+    for the highest working voltage (16-30 V: 0.1 mm bare conductor, 0.25 mm
+    pad/lead; 31-50 V: 0.6 / 0.4 mm): DRC clearance rule for tracks, vias
+    and pours between the HV nets and all others; pads of different parts at
+    least the pad value apart. Test a new rule once on a board copy.
+
 PCB checks: run_drc with 0 errors and every warning explained; render the
 board and look at it; report decoupling pad-to-pin distances, power path
 and differential pair lengths.

@@ -175,6 +175,44 @@ leave room.
 - Group related parts, and make the board as compact as these rules allow.
   Report what else would shrink it (for example moving a connector).
 
+## 4. Placement rules
+
+Check these on the placed board; they should not grow clearances or the
+board by much.
+
+### 4.1 Decoupling
+
+- Decoupling capacitors sit at the pin they serve, the connecting pad facing
+  the pin.
+- Where one pin has several capacitors, the smallest value sits closest.
+- Each capacitor gets a short via to GND right at its ground pad: leave room
+  for it when placing (a 0.6 mm via touching the pad edge).
+
+### 4.2 Switching loops
+
+- Keep the switching loops as small as possible: input capacitor - switch -
+  GND, and switch node - inductor - output capacitor - GND. Measure and
+  report their areas (pad-centre polygons).
+
+### 4.3 High voltage and low voltage
+
+- Separate high-voltage nets from low-voltage logic by the IPC-2221B
+  spacing for the highest working voltage between them (peak DC or AC):
+
+  | Voltage | Outer conductor, bare (B2) | Component lead or pad, uncoated (A6) |
+  |---|---|---|
+  | 0–15 V | 0.1 mm | 0.13 mm |
+  | 16–30 V | 0.1 mm | 0.25 mm |
+  | 31–50 V | 0.6 mm | 0.4 mm |
+
+- Find the highest voltage from the datasheets (supply, clamp, gate drive),
+  list the high-voltage nets, and add a DRC clearance rule between them and
+  every other net for tracks, vias and pours (`add_drc_rule`). Pads within
+  one footprint keep the manufacturer's spacing; check that pads of
+  different parts are at least the A6 value apart.
+- Test a new rule once on a copy of the board (e.g. a track 0.05 mm too
+  close) so it is known to fire.
+
 ## Checks
 
 - DRC with schematic parity: 0 errors. Explain every remaining warning.
