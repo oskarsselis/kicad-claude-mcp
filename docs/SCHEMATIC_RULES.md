@@ -1,9 +1,9 @@
-# KiCad design rules
+# KiCad schematic rules
 
-General requirements for schematics and PCBs built with this MCP server.
-They apply to every project unless the project asks otherwise. Choices for a
-single board (footprints, fab, ERC exceptions) belong in that project's own
-notes.
+General requirements for schematics drawn with this MCP server. They apply
+to every project unless the project asks otherwise. Choices for a single
+board belong in that project's own notes. PCB layout rules are in
+[PCB_RULES.md](PCB_RULES.md).
 
 These rules are also sent to every MCP client in the server's instructions
 (`server.py`), and `verify_schematic` checks the ones it can.
@@ -15,16 +15,14 @@ These rules are also sent to every MCP client in the server's instructions
 - Check that each footprint's pad numbers match its symbol's pin numbers.
 - Commit and push only when asked.
 
-## Schematic
-
-### Sheet and grid
+## Sheet and grid
 
 - Every connection point (pin end, wire end, label, junction) is on the
   100 mil (2.54 mm) grid. The tools enforce it.
 - Everything stays inside the drawing frame and clear of the title block.
 - One folder per project.
 
-### Functional blocks
+## Functional blocks
 
 - Each functional block (e.g. "USB PD controller", "Level shifter",
   "3V3 DC/DC") sits in a dashed rectangle with its title in the top-left
@@ -39,7 +37,7 @@ These rules are also sent to every MCP client in the server's instructions
 - Blocks connect by net labels and power symbols, never by wires crossing a
   block border.
 
-### Symbols
+## Symbols
 
 - Resistors: `Device:R_Small`. Capacitors: `Device:C_Small`.
 - Value field: the short value only (10µF, 5.1kΩ, 5mΩ). No descriptions
@@ -61,7 +59,7 @@ These rules are also sent to every MCP client in the server's instructions
 - Rotate or mirror symbols where that gives a cleaner layout, e.g. a
   back-to-back MOSFET pair.
 
-### Text
+## Text
 
 - Reference and value sit on two separate lines, Reference above Value, in
   the same position relative to every symbol (the side without pins).
@@ -70,7 +68,7 @@ These rules are also sent to every MCP client in the server's instructions
 - KiCad treats a symbol as one rectangle around its body, pins and text.
   Keep other symbols out of that rectangle, or they print as overlapping.
 
-### Wiring and labels
+## Wiring and labels
 
 - Wire each supporting part (resistor, capacitor, LED, diode, transistor)
   to the IC pin it serves, and put the net label on that wire.
@@ -94,7 +92,7 @@ These rules are also sent to every MCP client in the server's instructions
 - Wires may cross, but a crossing never joins two nets.
 - Keep it compact: short wires, few bends, parts close to their pins.
 
-### No-connects and ERC
+## No-connects and ERC
 
 - Don't flag pins that the library already hides as no-connect. Flag only
   visible unused pins.
@@ -104,41 +102,3 @@ These rules are also sent to every MCP client in the server's instructions
   checked by eye.
 - Compare the netlist with the source data.
 - Report ERC results exactly as returned.
-
-## PCB
-
-### Setup
-
-- Import from the schematic. Footprints carry the schematic's fields, BOM
-  flags and symbol links, so KiCad's Update PCB from Schematic matches them.
-- Hide all references and values.
-- 4 layers:
-  - F.Cu and B.Cu carry signals and power.
-  - In1.Cu and In2.Cu are GND layers (type power). No pour until asked.
-- F.Fab and B.Fab are disabled.
-- Set the design rules from the chosen fab's published capabilities. State
-  which limits the fab doesn't publish, and which values may cost extra.
-
-### Placement
-
-- Connectors sit on the board edges, opening outwards.
-- Group related parts.
-- Decoupling capacitors and all supporting parts sit as close as possible
-  to the IC pins they serve, with the connecting pad facing the pin.
-- Rotate ICs so high-speed or differential pins face their connector, and
-  keep the lane between them clear.
-- Power paths are short and straight: connector → sense resistor → switches
-  → output connector. Orient parts so their pads face along the path.
-- No part of another net may sit on a power path.
-- Keep signal circuits, such as level shifters, near the connector they
-  serve and out of the power path.
-- Put sensors such as thermistors next to the parts they monitor.
-- Make the board as compact as possible within the rules above, and report
-  what else would shrink it (for example moving a connector).
-
-### Checks
-
-- DRC with schematic parity: 0 errors. Explain every remaining warning.
-- Render the board and look at it.
-- Report key distances: decoupling pad to pin, power path lengths and
-  differential pair lengths.

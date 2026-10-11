@@ -66,9 +66,9 @@ logger = setup_logging()
 # Sent to every MCP client on connect, so these conventions apply on any
 # machine without local configuration.
 INSTRUCTIONS = """\
-KiCad MCP: conventions for schematics and PCBs (full list:
-docs/DESIGN_RULES.md in the server's repository). They apply to every project
-unless the project asks otherwise.
+KiCad MCP: conventions for schematics and PCBs (full lists:
+docs/SCHEMATIC_RULES.md and docs/PCB_RULES.md in the server's repository).
+They apply to every project unless the project asks otherwise.
 
 General: don't add, remove or change any part, value or net from the source
 data (CSV, netlist, datasheet); if something can't be mapped, stop and ask.
@@ -177,21 +177,47 @@ and open the PDF it returns and look at it: the checks cannot judge
 readability or whether the circuit does what was asked. Report ERC results
 exactly as returned.
 
-PCB setup:
-- Import from the schematic (add_footprint for each part, then
-  update_pcb_from_schematic): footprints carry the schematic's fields, BOM
-  flags and symbol links.
-- Hide all references and values (set_footprint_text_visibility).
-- 4 layers (set_layer_count(4)): F.Cu and B.Cu carry signals and power;
-  In1.Cu and In2.Cu are GND layers (set_copper_layer(..., "power", ...)),
-  with no pour until asked.
-- Disable F.Fab and B.Fab (set_layers_enabled(["F.Fab", "B.Fab"])), after
-  set_layer_count, which rebuilds the layer list.
-- Design rules from the chosen fab's published capabilities
-  (apply_fab_preset); state which limits the fab doesn't publish.
+PCB layout, in this order (when a step is already done, check it and move
+on):
+1. Prepare
+1.1 Run ERC and fix all errors. Check every footprint against its datasheet
+    when one is available (pads, pitch, exposed pad, span, pin 1, drills,
+    body); if you can't read it, ask the user to check that footprint.
+    Propose fixes; don't change an agreed footprint without asking.
+1.2 Sync the schematic to the PCB (add_footprint for each part, then
+    update_pcb_from_schematic): footprints carry the schematic's fields, BOM
+    flags and symbol links; re-sync after every schematic change. Hide all
+    references and values (set_footprint_text_visibility).
+1.3 Stackup: prefer 4 layers, signal/power, GND, GND, signal/power
+    (set_layer_count(4); set_copper_layer F.Cu/B.Cu "mixed", In1.Cu/In2.Cu
+    "power" named as GND planes, no pour until asked). set_layer_count(4)
+    sets the default stackup: 1.6 mm, 1 oz copper, prepreg 7628 RC46%
+    0.175 mm (Dk 4.74), core 1.03 mm (Dk 4.6), prepreg 0.175 mm. Disable F.Fab and
+    B.Fab (set_layers_enabled, after set_layer_count). Design rules from the
+    chosen fab's published capabilities (apply_fab_preset); state which
+    limits the fab doesn't publish.
+1.4 Mechanical constraints first: board outline, mounting holes (if used;
+    ask when the source doesn't say; M3 by default) and connector positions,
+    before placing anything else. The outline has rounded corners (default
+    1 mm radius, set_board_outline(corner_radius_mm=1.0)); keep parts clear
+    of them. Connectors on the board edges, opening outwards.
+2. Set rules before placing (don't route or pour yet)
+2.1 Group nets into classes: high current, low power, signal (Default), high
+    speed or differential (add_net_class, add_diff_pair_class,
+    assign_net_class with the exact board net names; label nets carry a "/"
+    prefix).
+2.2 Clearance and constraints at the fab's minimums (apply_fab_preset /
+    set_design_rules); net class clearance = fab minimum; vias 0.6/0.3 mm.
+2.3 Track widths from the current with IPC-2152
+    (solve_trace_width_for_current; 10 C rise). Signal 0.1-0.3 mm (default
+    0.2), power 0.3-0.7 mm; pours for high current (more than a 0.7 mm track
+    carries). State the design currents; ask when unknown.
+2.4 Impedance and length rules for controlled-impedance nets and
+    differential pairs: width/gap from the stackup
+    (calculate_differential_impedance), DRC rules for width, gap, uncoupled
+    length, skew and length (add_drc_rule). USB 2.0: 90 ohm, skew <= 1.27 mm.
 
 PCB placement:
-- Connectors on the board edges, opening outwards.
 - Group related parts.
 - Decoupling capacitors and all supporting parts as close as possible to the
   IC pins they serve, the connecting pad facing the pin.
