@@ -85,6 +85,8 @@ def register(mcp) -> None:
 
         `n` must be even, 2-32. The `(layers ...)` block and the
         `(setup (stackup ...) ...)` sub-block are regenerated to match.
+        4 layers get the default stackup: 1.6 mm, 1 oz copper, prepreg 7628
+        RC46% 0.175 mm (Dk 4.74), core 1.03 mm (Dk 4.6), prepreg 0.175 mm.
 
         Call this BEFORE adding tracks/vias on inner layers — existing items
         on layers that no longer exist will trigger DRC errors.
@@ -131,16 +133,20 @@ def register(mcp) -> None:
         shape: str = "rect",
         origin_x_mm: float = 10.0,
         origin_y_mm: float = 10.0,
+        corner_radius_mm: float = 0.0,
     ) -> dict:
         """Replace the Edge.Cuts outline with a width × height rectangle.
 
         The board's bottom-left corner sits at MCP (origin_x_mm, origin_y_mm).
-        Shape currently supports 'rect' only; rounded corners come later.
+        Boards get rounded corners: pass corner_radius_mm (e.g. 1.0), or
+        shape="rounded_rect" for a 1 mm radius. Keep parts clear of the
+        rounded corners.
         """
         tree, path = _load_active_pcb()
         result = ed.set_board_outline(
             tree, width_mm, height_mm, shape=shape,
             origin_x_mcp=origin_x_mm, origin_y_mcp=origin_y_mm,
+            corner_radius_mm=corner_radius_mm,
         )
         backup = _save_with_backup(tree, path)
         result["backup"] = str(backup) if backup else None

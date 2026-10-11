@@ -12,8 +12,9 @@ So for a 4-copper board: F.Cu=0, In1.Cu=4, In2.Cu=6, B.Cu=2.
 The non-copper user layers (silkscreen, mask, paste, etc.) keep fixed
 numbers regardless of total copper count.
 
-Stackup follows a uniform pattern: thin dielectric between every pair of
-adjacent copper layers, sized so total board thickness ≈ 1.6 mm.
+A 4-layer board gets the default fab stackup below (PCBWay's standard
+1.6 mm 4-layer build); other layer counts get uniform FR4 dielectrics sized
+so the board is about 1.6 mm.
 """
 
 from __future__ import annotations
@@ -24,7 +25,16 @@ from kicad_claude.adapters.sch_io import sym
 
 MAX_COPPER_LAYERS = 32  # KiCAD's hard cap; we usually limit to 12 in practice
 TARGET_BOARD_THICKNESS_MM = 1.6
-COPPER_THICKNESS_MM = 0.035
+COPPER_THICKNESS_MM = 0.035  # 1 oz finished, inner and outer
+
+# Default 4-layer stackup (PCBWay standard, 1.6 mm, 1 oz copper):
+# F.Cu / prepreg / In1.Cu / core / In2.Cu / prepreg / B.Cu.
+# (type, thickness mm, material, epsilon_r, loss tangent)
+DEFAULT_4L_DIELECTRICS: list[tuple[str, float, str, float, float]] = [
+    ("prepreg", 0.175, "7628 RC46%", 4.74, 0.02),
+    ("core", 1.03, "FR4", 4.6, 0.02),
+    ("prepreg", 0.175, "7628 RC46%", 4.74, 0.02),
+]
 
 
 # Fixed numbers for non-copper user layers — confirmed by inspecting outputs
@@ -109,8 +119,9 @@ def _dielectric_thickness(n: int) -> float:
 def build_stackup_block(n: int) -> list:
     """Return the `(stackup ...)` s-expression node for `n` copper layers.
 
-    Uniform FR4 dielectrics, alternating with copper. Total ≈ 1.6 mm.
-    The user can edit per-layer materials in KiCAD's Board Setup UI later.
+    4 layers: DEFAULT_4L_DIELECTRICS. Otherwise uniform FR4 dielectrics,
+    alternating with copper, total ≈ 1.6 mm. The user can edit per-layer
+    materials in KiCAD's Board Setup UI later.
     """
     if n < 2 or n % 2:
         raise ValueError(f"copper layer count must be even ≥ 2 (got {n})")
@@ -143,15 +154,20 @@ def build_stackup_block(n: int) -> list:
             ]
         )
         if i < len(copper_names) - 1:
+            if n == 4:
+                kind, thick, material, er, tan_d = DEFAULT_4L_DIELECTRICS[i]
+            else:
+                kind = "core" if i == 0 and n == 2 else "prepreg"
+                thick, material, er, tan_d = diel_t, "FR4", 4.5, 0.02
             out.append(
                 [
                     sym("layer"),
                     f"dielectric {i + 1}",
-                    [sym("type"), "core" if i == 0 and n == 2 else "prepreg"],
-                    [sym("thickness"), diel_t],
-                    [sym("material"), "FR4"],
-                    [sym("epsilon_r"), 4.5],
-                    [sym("loss_tangent"), 0.02],
+                    [sym("type"), kind],
+                    [sym("thickness"), thick],
+                    [sym("material"), material],
+                    [sym("epsilon_r"), er],
+                    [sym("loss_tangent"), tan_d],
                 ]
             )
 

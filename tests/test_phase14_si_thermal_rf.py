@@ -82,18 +82,26 @@ def test_trace_current_ipc2152_typical():
     assert 1.2 < amps < 1.6
 
 
-def test_trace_current_internal_lower_than_external():
-    """Internal layers carry less current (worse cooling)."""
-    ext = ec.trace_current_ipc2152(0.5, location="external")
-    intl = ec.trace_current_ipc2152(0.5, location="internal")
-    assert intl < ext
+def test_ipc2152_matches_kicad_reference_points():
+    """1 A at 10 °C on 1 oz external needs about 0.28 mm; 5 A about 4.6 mm."""
+    assert ec.solve_trace_width_for_current(1.0) == pytest.approx(0.277, abs=0.005)
+    assert ec.solve_trace_width_for_current(5.0) == pytest.approx(4.55, abs=0.05)
+
+
+def test_ipc2152_does_not_derate_internal_layers_like_ipc2221():
+    """IPC-2221 halves internal capacity; IPC-2152 data shows internal traces
+    carry about as much (heat spreads through the FR4)."""
+    assert ec.trace_current_ipc2221(0.5, location="internal") < ec.trace_current_ipc2221(0.5)
+    ratio = ec.trace_current_ipc2152(0.5, location="internal") / ec.trace_current_ipc2152(0.5)
+    assert 0.8 < ratio < 1.25
 
 
 def test_solve_trace_width_for_current_round_trip():
     target = 2.0
-    w = ec.solve_trace_width_for_current(target, copper_thickness_mm=0.035, temp_rise_c=10)
-    actual = ec.trace_current_ipc2152(w, copper_thickness_mm=0.035, temp_rise_c=10)
-    assert abs(actual - target) < 0.01
+    for location in ("external", "internal"):
+        w = ec.solve_trace_width_for_current(target, copper_thickness_mm=0.035, temp_rise_c=10, location=location)
+        actual = ec.trace_current_ipc2152(w, copper_thickness_mm=0.035, temp_rise_c=10, location=location)
+        assert abs(actual - target) < 0.01
 
 
 def test_trace_current_rejects_invalid():

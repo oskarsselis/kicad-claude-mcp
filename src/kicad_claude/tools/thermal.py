@@ -63,7 +63,8 @@ def register(mcp) -> None:
         location: str = "external",
         margin_pct: float = 20.0,
     ) -> dict:
-        """Minimum trace width to carry `current_a` per IPC-2152, with margin.
+        """Minimum trace width to carry `current_a` per IPC-2152 (Brooks &
+        Adam fit, as in KiCad's calculator), with margin.
 
         `margin_pct` adds a safety factor (default 20%) so the recommended
         width carries the target current at the chosen ΔT plus headroom.

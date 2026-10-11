@@ -372,3 +372,34 @@ def test_acceptance_12_layer_pcb_drc_clean(tmp_path):
     ]
     assert not bad, f"unexpected layer-related violations: {bad}"
     state.clear_active()
+
+
+def test_four_layers_get_the_default_fab_stackup():
+    stack = pcb_layers.build_stackup_block(4)
+    diel = [r for r in stack[1:] if isinstance(r, list) and len(r) > 1 and str(r[1]).startswith("dielectric")]
+
+    def val(row, key):
+        return sch_io.find_child(row, key)[1]
+
+    assert [val(d, "type") for d in diel] == ["prepreg", "core", "prepreg"]
+    assert [val(d, "thickness") for d in diel] == [0.175, 1.03, 0.175]
+    assert [val(d, "epsilon_r") for d in diel] == [4.74, 4.6, 4.74]
+    assert val(diel[0], "material") == "7628 RC46%"
+
+
+def test_rounded_board_outline_uses_lines_and_arcs(blank_project):
+    tree = sch_io.parse_file(blank_project["pcb"])
+    res = pcb_ed.set_board_outline(tree, 40.0, 30.0, origin_x_mcp=100, origin_y_mcp=100, corner_radius_mm=1.0)
+    assert res["shape"] == "rounded_rect" and res["corner_radius_mm"] == 1.0
+    edges = [c for c in tree if pcb_ed._is_edge_cuts_node(c)]
+    heads = sorted(str(c[0]) for c in edges)
+    assert heads == ["gr_arc"] * 4 + ["gr_line"] * 4
+    # every arc ends where a line starts or ends: the outline is closed
+    pts = {}
+    for c in edges:
+        for k in ("start", "end"):
+            p = tuple(sch_io.find_child(c, k)[1:3])
+            pts[p] = pts.get(p, 0) + 1
+    assert set(pts.values()) == {2}
+    with pytest.raises(ValueError):
+        pcb_ed.set_board_outline(tree, 40.0, 30.0, corner_radius_mm=16.0)

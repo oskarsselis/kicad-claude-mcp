@@ -224,17 +224,23 @@ def set_board_outline(
     shape: str = "rect",
     origin_x_mcp: float = 10.0,
     origin_y_mcp: float = 10.0,
+    corner_radius_mm: float = 0.0,
 ) -> dict:
     """Replace the Edge.Cuts outline with a `width × height` rectangle.
 
     The board's bottom-left corner is placed at MCP (`origin_x_mcp`,
-    `origin_y_mcp`). Returns a summary including the four corner coordinates.
+    `origin_y_mcp`). With `corner_radius_mm` > 0 (or shape "rounded_rect",
+    default radius 1 mm) the corners are rounded: four lines and four arcs.
+    Returns a summary including the corner coordinates.
     """
     if shape not in ("rect", "rounded_rect"):
         raise ValueError(f"shape must be 'rect' or 'rounded_rect' (got {shape!r})")
-    if shape == "rounded_rect":
-        # Rounded corners need 4 lines + 4 arcs; defer until Phase 6+.
-        raise NotImplementedError("rounded_rect outline not yet implemented")
+    if shape == "rounded_rect" and corner_radius_mm <= 0:
+        corner_radius_mm = 1.0
+    if corner_radius_mm < 0 or 2 * corner_radius_mm > min(width_mm, height_mm):
+        raise ValueError("corner radius must be between 0 and half the shorter board side")
+    if corner_radius_mm > 0:
+        shape = "rounded_rect"
 
     remove_board_outline(tree)
     page_h = page_height_mm(tree)
@@ -246,21 +252,47 @@ def set_board_outline(
     bl_k = mcp_to_kicad_xy(*bl_mcp, page_h)  # bottom-left in KiCAD coords (Y down)
     tr_k = mcp_to_kicad_xy(*tr_mcp, page_h)  # top-right in KiCAD coords
 
-    # gr_rect's start/end are diagonal corners; KiCAD doesn't care about the order.
-    node = [
-        sym("gr_rect"),
-        [sym("start"), round_mm(bl_k[0]), round_mm(bl_k[1])],
-        [sym("end"), round_mm(tr_k[0]), round_mm(tr_k[1])],
-        [sym("stroke"), [sym("width"), 0.15], [sym("type"), sym("solid")]],
-        [sym("fill"), sym("no")],
-        [sym("layer"), "Edge.Cuts"],
-        [sym("uuid"), str(uuid.uuid4())],
-    ]
-    tree.append(node)
+    def edge(kind: str, *points: tuple[float, float]) -> list:
+        keys = ("start", "mid", "end") if kind == "gr_arc" else ("start", "end")
+        return [
+            sym(kind),
+            *[[sym(k), round_mm(x), round_mm(y)] for k, (x, y) in zip(keys, points)],
+            [sym("stroke"), [sym("width"), 0.15], [sym("type"), sym("solid")]],
+            [sym("layer"), "Edge.Cuts"],
+            [sym("uuid"), str(uuid.uuid4())],
+        ]
+
+    r = corner_radius_mm
+    if r <= 0:
+        # gr_rect's start/end are diagonal corners; KiCAD doesn't care about the order.
+        tree.append([
+            sym("gr_rect"),
+            [sym("start"), round_mm(bl_k[0]), round_mm(bl_k[1])],
+            [sym("end"), round_mm(tr_k[0]), round_mm(tr_k[1])],
+            [sym("stroke"), [sym("width"), 0.15], [sym("type"), sym("solid")]],
+            [sym("fill"), sym("no")],
+            [sym("layer"), "Edge.Cuts"],
+            [sym("uuid"), str(uuid.uuid4())],
+        ])
+    else:
+        x0, x1 = bl_k[0], tr_k[0]
+        y0, y1 = tr_k[1], bl_k[1]          # file coords: y0 top, y1 bottom
+        d = r - r / math.sqrt(2)           # arc midpoint inset from the corner
+        tree.extend([
+            edge("gr_line", (x0 + r, y0), (x1 - r, y0)),
+            edge("gr_line", (x1, y0 + r), (x1, y1 - r)),
+            edge("gr_line", (x1 - r, y1), (x0 + r, y1)),
+            edge("gr_line", (x0, y1 - r), (x0, y0 + r)),
+            edge("gr_arc", (x0, y0 + r), (x0 + d, y0 + d), (x0 + r, y0)),
+            edge("gr_arc", (x1 - r, y0), (x1 - d, y0 + d), (x1, y0 + r)),
+            edge("gr_arc", (x1, y1 - r), (x1 - d, y1 - d), (x1 - r, y1)),
+            edge("gr_arc", (x0 + r, y1), (x0 + d, y1 - d), (x0, y1 - r)),
+        ])
     return {
         "shape": shape,
         "width_mm": width_mm,
         "height_mm": height_mm,
+        "corner_radius_mm": r,
         "bottom_left_mcp": list(bl_mcp),
         "top_right_mcp": list(tr_mcp),
     }

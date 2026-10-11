@@ -184,8 +184,33 @@ def solve_microstrip_width(
 
 
 # --------------------------------------------------------------------------- #
-# Trace current capacity (IPC-2152)
+# Trace current capacity: IPC-2152 (default) and the older IPC-2221
 # --------------------------------------------------------------------------- #
+
+MM_PER_MIL = 0.0254
+
+# IPC-2152 publishes charts, not equations. These are Brooks & Adam's fits to
+# its data ("Trace Currents and Temperatures Revisited", 2015, table 3-1), as
+# used by KiCad's track width calculator:
+#     dT = K * I^a * W^b * Th^c     (dT in deg C, I in A, W and Th in mils)
+# External coefficients hold for all copper weights; internal ones depend on
+# the copper weight. Unlike IPC-2221, internal traces are not derated (FR4
+# carries heat away better than air).
+_IPC2152_EXTERNAL = (215.3, 2.0, -1.15, -1.0)
+_IPC2152_INTERNAL = [  # (nominal thickness mils, (K, a, b, c))
+    (0.689, (120.0, 2.0, -1.10, -1.52)),   # 0.5 oz
+    (1.378, (200.0, 1.9, -1.10, -1.52)),   # 1 oz
+    (2.756, (300.0, 2.0, -1.15, -1.52)),   # 2 oz
+    (4.134, (262.5, 1.9, -1.15, -1.52)),   # 3 oz
+]
+
+
+def _ipc2152_coeffs(thickness_mils: float, location: str) -> tuple[float, float, float, float]:
+    if location == "external":
+        return _IPC2152_EXTERNAL
+    if location != "internal":
+        raise ValueError(f"location must be 'external' or 'internal' (got {location!r})")
+    return min(_IPC2152_INTERNAL, key=lambda e: abs(e[0] - thickness_mils))[1]
 
 
 def trace_current_ipc2152(
@@ -195,12 +220,8 @@ def trace_current_ipc2152(
     temp_rise_c: float = 10.0,           # mild temp rise
     location: Literal["external", "internal"] = "external",
 ) -> float:
-    """Estimate sustained current capacity using IPC-2152.
-
-    I = k × ΔT^0.44 × A^0.725
-
-    where A = cross-sectional area (mils²), and k = 0.048 (external surface
-    layer) or 0.024 (internal layer with worse heat dissipation).
+    """Steady-state current a trace can carry for a given temperature rise,
+    per IPC-2152 (Brooks & Adam fit, as in KiCad's calculator).
 
     Args:
         width_mm:           trace width
@@ -209,20 +230,16 @@ def trace_current_ipc2152(
         location:           "external" (top/bottom) or "internal" (inner layer)
 
     Returns:
-        Current in amps (steady-state).
+        Current in amps.
     """
     if width_mm <= 0 or copper_thickness_mm <= 0:
         raise ValueError("width and thickness must be positive")
     if temp_rise_c <= 0:
         raise ValueError("temp rise must be > 0")
-
-    # Convert to mils (IPC-2152's native unit)
-    width_mils = width_mm / 0.0254
-    thickness_mils = copper_thickness_mm / 0.0254
-    area_mils2 = width_mils * thickness_mils
-
-    k = 0.048 if location == "external" else 0.024
-    return k * (temp_rise_c ** 0.44) * (area_mils2 ** 0.725)
+    th = copper_thickness_mm / MM_PER_MIL
+    k, a, b, c = _ipc2152_coeffs(th, location)
+    denom = k * (width_mm / MM_PER_MIL) ** b * th ** c
+    return (temp_rise_c / denom) ** (1.0 / a)
 
 
 def solve_trace_width_for_current(
@@ -232,19 +249,35 @@ def solve_trace_width_for_current(
     temp_rise_c: float = 10.0,
     location: Literal["external", "internal"] = "external",
 ) -> float:
-    """Inverse IPC-2152 — solve for the minimum width to carry `current_a`.
-
-    Returns the trace width in mm.
-    """
+    """Inverse IPC-2152: the minimum width (mm) to carry `current_a` at the
+    given temperature rise."""
     if current_a <= 0:
         raise ValueError("current must be positive")
+    if temp_rise_c <= 0:
+        raise ValueError("temp rise must be > 0")
+    th = copper_thickness_mm / MM_PER_MIL
+    k, a, b, c = _ipc2152_coeffs(th, location)
+    denom = k * current_a ** a * th ** c
+    return (temp_rise_c / denom) ** (1.0 / b) * MM_PER_MIL
+
+
+def trace_current_ipc2221(
+    width_mm: float,
+    *,
+    copper_thickness_mm: float = 0.035,
+    temp_rise_c: float = 10.0,
+    location: Literal["external", "internal"] = "external",
+) -> float:
+    """The older IPC-2221 estimate, I = k × ΔT^0.44 × A^0.725 (A in mils²,
+    k = 0.048 external, 0.024 internal). Kept for comparison; IPC-2152 is
+    the default."""
+    if width_mm <= 0 or copper_thickness_mm <= 0:
+        raise ValueError("width and thickness must be positive")
+    if temp_rise_c <= 0:
+        raise ValueError("temp rise must be > 0")
+    area_mils2 = (width_mm / MM_PER_MIL) * (copper_thickness_mm / MM_PER_MIL)
     k = 0.048 if location == "external" else 0.024
-    # I = k × ΔT^0.44 × A^0.725
-    # A = (I / (k × ΔT^0.44))^(1/0.725)
-    area_mils2 = (current_a / (k * temp_rise_c ** 0.44)) ** (1 / 0.725)
-    thickness_mils = copper_thickness_mm / 0.0254
-    width_mils = area_mils2 / thickness_mils
-    return width_mils * 0.0254
+    return k * (temp_rise_c ** 0.44) * (area_mils2 ** 0.725)
 
 
 # --------------------------------------------------------------------------- #
