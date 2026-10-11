@@ -33,6 +33,9 @@ These rules are also sent to every MCP client in the server's instructions
   it, below the title.
 - Related blocks sit next to each other, e.g. a regulator directly below the
   circuit it feeds.
+- Blocks tile the sheet with one equal gap: between neighbouring blocks and
+  between blocks and the drawing frame or title block (`get_sheet_layout`).
+  Each circuit is centred in its block.
 - Blocks connect by net labels and power symbols, never by wires crossing a
   block border.
 
@@ -77,8 +80,10 @@ These rules are also sent to every MCP client in the server's instructions
   to.
 - No wire run is longer than a quarter of the sheet width (A4: 74 mm, A3:
   105 mm). Longer connections get a net label at both ends instead.
-- Net names are functional and prefixed by their block, e.g. PD_SCL,
-  PD_SDA, PD_OTP (unless the source data fixes the names).
+- Net names: when the user gives a source for them (a connection CSV, a
+  netlist, a reference design, ...) or says which to use, those names are
+  used exactly. Only when no source is given, nets are named by function and
+  prefixed by their block, e.g. PD_SCL, PD_SDA, PD_OTP.
 - Wires connected to power symbols (power ports) are red
   (`color_power_wires`); ground wires keep the default colour.
 - Test points sit in the circuit, on the wire of the net they probe, next to

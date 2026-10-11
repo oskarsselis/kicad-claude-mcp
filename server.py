@@ -88,6 +88,10 @@ Functional blocks:
   (add_block). Blocks must not overlap; keep each block's symbols, wires and
   text inside it, below the title. Place related blocks next to each other
   (e.g. a regulator directly below the circuit it feeds).
+- Tile the blocks with one equal gap (e.g. 5.08 mm) between neighbouring
+  blocks and between blocks and the drawing frame or title block
+  (get_sheet_layout gives both); centre each circuit in its block, keeping
+  its connection points on the grid.
 - Connect blocks with net labels and power symbols, never with wires across
   a block border.
 
@@ -135,8 +139,10 @@ Wiring and labels:
   the part they belong to.
 - No wire run longer than a quarter of the sheet width (A4: 74 mm, A3: 105
   mm): for longer connections put a net label at both ends instead.
-- Net names are functional and prefixed by their block, e.g. PD_SCL, PD_SDA,
-  PD_OTP, DCDC_FB (unless the source data fixes the names).
+- Net names: when the user gives a source for them (a connection CSV, a
+  netlist, a reference design, ...) or says which to use, use those names
+  exactly. Only when no source is given, name nets by function, prefixed by
+  their block, e.g. PD_SCL, PD_SDA, PD_OTP, DCDC_FB.
 - Power wires are red: after wiring, call color_power_wires (colours every
   wire connected to a power symbol; ground stays default).
 - Test points sit on the wire of the net they probe, in the circuit next to
