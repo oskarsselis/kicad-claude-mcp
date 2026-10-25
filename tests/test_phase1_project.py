@@ -113,6 +113,48 @@ def test_set_project_via_pro_file(tmp_path: Path):
     assert result["name"] == "y"
 
 
+_KICAD10_FOOTPRINT = """	(footprint "Resistor_SMD:R_0402_1005Metric"
+		(layer "F.Cu")
+		(uuid "6d6f6f6e-0000-4000-8000-000000000001")
+		(at 50 50 0)
+		(property "Reference" "R1"
+			(at 0 -1.17 0)
+			(layer "F.SilkS")
+			(effects (font (size 1 1) (thickness 0.15)))
+		)
+		(property "Value" "10k"
+			(at 0 1.17 0)
+			(layer "F.Fab")
+			(effects (font (size 1 1) (thickness 0.15)))
+		)
+		(fp_text user "${REFERENCE}"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(effects (font (size 0.26 0.26) (thickness 0.04)))
+		)
+		(pad "1" smd roundrect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Mask" "F.Paste"))
+		(pad "2" smd roundrect (at 0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Mask" "F.Paste"))
+	)
+"""
+
+
+def test_set_project_with_kicad10_footprint(tmp_path: Path):
+    """KiCAD 10 library footprints carry a single fp_text (${REFERENCE});
+    kicad-skip crashed on them ("'Symbol' object has no attribute
+    '_base_coords'"), which broke set_project / get_project_state."""
+    mcp = _make_mcp()
+    _call(mcp, "create_project", path=str(tmp_path / "f"), name="f")
+    pcb = tmp_path / "f" / "f.kicad_pcb"
+    text = pcb.read_text(encoding="utf-8").rstrip()
+    assert text.endswith(")")
+    pcb.write_text(text[:-1] + _KICAD10_FOOTPRINT + ")\n", encoding="utf-8")
+    state.clear_active()
+    result = _call(mcp, "set_project", project_path=str(tmp_path / "f"))
+    assert result["footprints"] == 1
+    assert result["nets"] == 1
+    assert _call(mcp, "get_project_state")["footprints"] == 1
+
+
 def test_list_components_empty(tmp_path: Path):
     mcp = _make_mcp()
     _call(mcp, "create_project", path=str(tmp_path / "e"), name="e")

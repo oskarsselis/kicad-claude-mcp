@@ -12,9 +12,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from skip import PCB, Schematic
+from skip import Schematic
 
 from kicad_claude import state
+from kicad_claude.adapters import sch_io
 from kicad_claude.templates.blank import write_blank_project
 
 logger = logging.getLogger("kicad-claude.tools.project")
@@ -47,9 +48,15 @@ def _resolve_project_dir_and_name(project_path: str) -> tuple[Path, str]:
 
 
 def _summarize(proj: state.ActiveProject) -> dict:
-    """Cheap counts of an active project: symbols, footprints, nets."""
-    sch = Schematic(str(proj.sch_path))
-    pcb = PCB(str(proj.pcb_path))
+    """Cheap counts of an active project: symbols (root sheet), footprints, nets.
+
+    Counts top-level nodes with sch_io rather than building kicad-skip models:
+    kicad-skip crashes on KiCAD 10 footprints that carry a single fp_text
+    ("'Symbol' object has no attribute '_base_coords'"), which broke
+    set_project / get_project_state on any board with footprints.
+    """
+    sch = sch_io.parse_file(proj.sch_path)
+    pcb = sch_io.parse_file(proj.pcb_path)
     return {
         "path": str(proj.path),
         "name": proj.name,
@@ -58,9 +65,9 @@ def _summarize(proj: state.ActiveProject) -> dict:
             "sch": str(proj.sch_path),
             "pcb": str(proj.pcb_path),
         },
-        "symbols": len(sch.symbol),
-        "footprints": len(getattr(pcb, "footprint", [])),
-        "nets": len(pcb.net),
+        "symbols": len(sch_io.find_children(sch, "symbol")),
+        "footprints": len(sch_io.find_children(pcb, "footprint")),
+        "nets": len(sch_io.find_children(pcb, "net")),
     }
 
 
