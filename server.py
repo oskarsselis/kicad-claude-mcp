@@ -80,7 +80,9 @@ y 7.64..284.64). The title block fills the bottom-right corner (about 110 x 34
 mm): keep it clear. Put the circuit in the upper/middle part of the page.
 
 Projects: one folder per project, e.g. create_project(path="<parent>/<name>",
-name="<name>").
+name="<name>"). The top (root) sheet always has a short project description
+at the bottom in its own block ("About this project"): what the board does,
+its main parts and interfaces, and the source data, in a few plain lines.
 
 Functional blocks:
 - Put each functional block (e.g. "USB PD controller", "Level shifter",
@@ -122,21 +124,42 @@ Symbols:
   down with the "GND" text hidden (hide_value=True); supply symbols face up.
   A rail without its own library symbol uses a similar one with the net as
   value (add_power_symbol(net="+5V_PD", symbol="+5V")).
+- Each power symbol (+3V3, +1V8, ...) sits at the end of its rail, directly
+  above the component it feeds (the supply pin, or the outermost capacitor on
+  a horizontal rail), never in the middle of the rail.
 - Use mirror="y" where rotation alone can't give the needed pin order (e.g. a
   back-to-back MOSFET pair with both gates down).
+- Symbols created or redrawn for a project (create_symbol): no signal pins on
+  the bottom. Inputs on the left, outputs on the right; supply pins on top,
+  ground pins on the bottom. Power-path parts (regulators, load switches)
+  keep their main input on the left and output on the right.
 - Pins of type no_connect that the library hides need no no-connect flag;
   flag only visible unused pins.
 - Add a PWR_FLAG to every supply and ground net that no power-output pin
   drives (e.g. power arriving through a connector), or ERC reports
-  power_pin_not_driven.
+  power_pin_not_driven. PWR_FLAGs never sit next to parts: put them in their
+  own block ("Power flags (ERC)"), each wired directly to its power symbol,
+  with no net or global label added; in a hierarchical design that block is
+  on the top (parent) sheet. KiCad 10's ERC reports "Pin not connected" for
+  these rows (no real pins on that page); exclude them in the ERC dialog
+  with a comment.
 
 Wiring and labels:
 - Connect each supporting part (resistors, capacitors, LEDs, diodes,
   transistors) to the IC pin it serves with a wire; put the net label on that
   wire. Connections between functional blocks use labels alone.
+- Any passive that belongs to one pin or one function (decoupling and bulk
+  caps, crystal and load caps, series and termination resistors, AC-coupling
+  and reference caps, current-limit and feedback resistors, ESD diodes at a
+  connector) sits next to that pin and is wired to it, also when the source
+  data names every net ("connect each pin with a net label"): the label goes
+  on the wire, it does not replace it. Labels alone only join blocks or ICs.
 - Decoupling capacitors sit vertically right at the pin they serve, each with
-  its own ground symbol. Pull-ups, pull-downs and gate resistors sit next to
-  the part they belong to.
+  its own ground symbol. Group them per power pin (e.g. DVDDIO, DVDD, MVDD,
+  PVDD, AVDD): all caps of one pin together at that pin, smallest value
+  closest; if the source doesn't say which cap serves which pin, assign them
+  in order and state the assignment. Pull-ups, pull-downs and gate resistors
+  sit next to the part they belong to.
 - No wire run longer than a quarter of the sheet width (A4: 74 mm, A3: 105
   mm): for longer connections put a net label at both ends instead.
 - Net names: when the user gives a source for them (a connection CSV, a
@@ -153,6 +176,12 @@ Wiring and labels:
 - Wires may cross where that keeps the layout simple; a crossing must never
   join two nets (only wire ends create connections).
 - Keep it compact: short wires, few bends, parts close to the pins they serve.
+  Keep rails short: a supply rail runs from the pin past its capacitors and
+  ends at its power symbol, with no empty wire beyond the last part.
+- Parts with many ground pins (e.g. an FPC connector with GND between the
+  signal pairs): join the ground pins with short stubs to one vertical bus
+  wire, with a junction at each stub and a single GND symbol at the bus end,
+  instead of a GND symbol per pin. Signal stubs may cross the bus.
 
 Text and spacing:
 - Reference/Value text uses the project's default text size (KiCad's

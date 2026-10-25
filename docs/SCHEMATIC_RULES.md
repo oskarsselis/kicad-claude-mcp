@@ -21,6 +21,10 @@ These rules are also sent to every MCP client in the server's instructions
   100 mil (2.54 mm) grid. The tools enforce it.
 - Everything stays inside the drawing frame and clear of the title block.
 - One folder per project.
+- The top (root) sheet always carries a short project description at the
+  bottom, in its own block ("About this project"): what the board does, its
+  main parts and interfaces, and where the source data comes from, in a few
+  plain lines.
 
 ## Functional blocks
 
@@ -56,8 +60,15 @@ These rules are also sent to every MCP client in the server's instructions
   value.
 - GND symbols face down with the "GND" text hidden. Supply symbols face up.
 - Power-symbol references are hidden.
+- Each power symbol (+3V3, +1V8, ...) sits at the end of its rail, directly
+  above the component it feeds (the supply pin, or the outermost capacitor on
+  a horizontal rail), never in the middle of the rail.
 - Rotate or mirror symbols where that gives a cleaner layout, e.g. a
   back-to-back MOSFET pair.
+- Symbols created or redrawn for a project: no signal pins on the bottom.
+  Inputs on the left, outputs on the right; supply pins on top, ground pins
+  on the bottom. Power-path parts (regulators, load switches) keep their
+  main input on the left and output on the right.
 
 ## Text
 
@@ -72,8 +83,19 @@ These rules are also sent to every MCP client in the server's instructions
 
 - Wire each supporting part (resistor, capacitor, LED, diode, transistor)
   to the IC pin it serves, and put the net label on that wire.
+- Any passive that belongs to one pin or one function sits next to that pin
+  and is wired to it: decoupling and bulk capacitors, crystal and load
+  capacitors, series and termination resistors, AC-coupling capacitors,
+  reference capacitors, current-limit and feedback resistors, ESD diodes at a
+  connector. This holds even when the source data gives every net a name
+  ("connect each pin with a net label"): the label goes on the wire, it does
+  not replace the wire. Labels alone only join functional blocks or ICs.
 - Decoupling capacitors sit vertically, directly at the pin they serve, each
   with its own ground symbol.
+- Group decoupling capacitors per power pin: all capacitors of one supply pin
+  (e.g. DVDDIO, DVDD, MVDD, PVDD, AVDD) sit together at that pin, the
+  smallest value closest to it. When the source data doesn't say which
+  capacitor serves which pin, assign them in order and state the assignment.
 - Pull-ups, pull-downs and gate resistors sit next to the part they belong
   to.
 - No wire run is longer than a quarter of the sheet width (A4: 74 mm, A3:
@@ -91,6 +113,12 @@ These rules are also sent to every MCP client in the server's instructions
   the text, and at a stub's free end the label points back towards the pin.
 - Wires may cross, but a crossing never joins two nets.
 - Keep it compact: short wires, few bends, parts close to their pins.
+  Keep rails short: a supply rail runs from the pin past its capacitors and
+  ends at its power symbol, with no empty wire beyond the last part.
+- Parts with many ground pins (e.g. an FPC connector with GND between the
+  signal pairs): join the ground pins with short stubs to one vertical bus
+  wire, with a junction at each stub and a single GND symbol at the bus
+  end, instead of a GND symbol per pin. Signal stubs may cross the bus.
 
 ## No-connects and ERC
 
@@ -98,6 +126,12 @@ These rules are also sent to every MCP client in the server's instructions
   visible unused pins.
 - Add a PWR_FLAG to every supply and ground net that no power-output pin
   drives, such as power arriving through a connector.
+- PWR_FLAGs never sit next to parts. They go in their own block ("Power
+  flags (ERC)"), each wired directly to its power symbol, with no net or
+  global label added. In a hierarchical design that block is on the top
+  (parent) sheet, with the circuit on the child sheets. KiCad 10's ERC then
+  reports "Pin not connected" for these flag rows (the page has no real
+  pins); exclude those violations in the ERC dialog with a comment.
 - Finish with `verify_schematic`. It must report `ok`, and the PDF must be
   checked by eye.
 - Compare the netlist with the source data.
