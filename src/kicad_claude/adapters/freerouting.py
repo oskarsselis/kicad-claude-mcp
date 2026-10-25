@@ -152,6 +152,7 @@ def route(
     try:
         r = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,

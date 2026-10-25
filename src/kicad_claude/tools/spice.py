@@ -119,7 +119,7 @@ def register(mcp) -> None:
         try:
             r = subprocess.run(
                 [str(ngspice), "-b", str(driver_path), "-o", str(out)],
-                capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
                 timeout=timeout_seconds, check=False,
             )
         except subprocess.TimeoutExpired as e:
