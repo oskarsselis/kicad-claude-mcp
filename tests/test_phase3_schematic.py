@@ -95,6 +95,24 @@ def test_pretty_print_round_trip_blank_project(tmp_path: Path):
     assert sch_io.dumps(tree) == sch_io.dumps(tree2)
 
 
+def test_round_trip_keeps_escapes_in_multiline_text(tmp_path: Path):
+    """Multi-line text must stay escaped on rewrite (a raw newline inside a
+    quoted string makes kicad-cli fail with "Failed to load schematic")."""
+    src = tmp_path / "in.kicad_sch"
+    src.write_text(
+        '(kicad_sch (text "line 1\\nline 2\\ttab \\"quoted\\" back\\\\slash" (at 10 20 0)))\n',
+        encoding="utf-8",
+    )
+    tree = sch_io.parse_file(src)
+    assert tree[1][1] == 'line 1\nline 2\ttab "quoted" back\\slash'
+    out = tmp_path / "out.kicad_sch"
+    sch_io.write_file(out, tree)
+    text = out.read_text(encoding="utf-8")
+    assert '"line 1\\nline 2\\ttab \\"quoted\\" back\\\\slash"' in text
+    assert "line 1\nline 2" not in text
+    assert sch_io.parse_file(out)[1][1] == tree[1][1]
+
+
 # ===== sch_editor on the blank template (no library lookups) =============== #
 
 
