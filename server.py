@@ -138,11 +138,11 @@ Symbols:
 - Add a PWR_FLAG to every supply and ground net that no power-output pin
   drives (e.g. power arriving through a connector), or ERC reports
   power_pin_not_driven. PWR_FLAGs never sit next to parts: put them in their
-  own block ("Power flags (ERC)"), each wired directly to its power symbol,
-  with no net or global label added; in a hierarchical design that block is
-  on the top (parent) sheet. KiCad 10's ERC reports "Pin not connected" for
-  these rows (no real pins on that page); exclude them in the ERC dialog
-  with a comment.
+  own block ("Power flags (ERC)"), one row per rail: power symbol at one end
+  of a short wire, the PWR_FLAG on it, a global label with the rail's name at
+  the other end. In a hierarchical design that block is on the top (parent)
+  sheet. The global label is needed: without it KiCad 10's ERC reports "Pin
+  not connected" for a power symbol and PWR_FLAG on a page without real pins.
 
 Wiring and labels:
 - Connect each supporting part (resistors, capacitors, LEDs, diodes,

@@ -127,11 +127,12 @@ These rules are also sent to every MCP client in the server's instructions
 - Add a PWR_FLAG to every supply and ground net that no power-output pin
   drives, such as power arriving through a connector.
 - PWR_FLAGs never sit next to parts. They go in their own block ("Power
-  flags (ERC)"), each wired directly to its power symbol, with no net or
-  global label added. In a hierarchical design that block is on the top
-  (parent) sheet, with the circuit on the child sheets. KiCad 10's ERC then
-  reports "Pin not connected" for these flag rows (the page has no real
-  pins); exclude those violations in the ERC dialog with a comment.
+  flags (ERC)"): one row per rail, with the power symbol at one end of a
+  short wire, the PWR_FLAG on it and a global label with the rail's name at
+  the other end. In a hierarchical design that block is on the top (parent)
+  sheet, with the circuit on the child sheets. The global label is needed:
+  without it KiCad 10's ERC reports "Pin not connected" for a power symbol
+  and PWR_FLAG on a page without real pins.
 - Finish with `verify_schematic`. It must report `ok`, and the PDF must be
   checked by eye.
 - Compare the netlist with the source data.
